@@ -1,0 +1,26 @@
+# Data
+data/*
+!data/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Libero generated output
+libero/*/
+!libero/constraint/
+*.prjx.bak
+designer/
+synthesis/
+simulation/
+component/work/
+
+# SoftConsole / Eclipse
+firmware/Debug/
+firmware/Release/
+.metadata/
+
+# Simulation
+*.vcd
+tb
