@@ -12,7 +12,9 @@ The full plan lives in Claude Docs:
 
 ## UART frame format (Phase 2)
 
-The firmware sends one line per frame, at frame end:
+The firmware sends one line per frame, at frame end, through the PIC32 to
+`/dev/ttyACM0`. `tools/rppg/capture.py` first puts the PIC32 in relay mode;
+see its docstring.
 
 ```
 <frame_counter>,<timestamp_us>,<sum_r>,<sum_g>,<sum_b>,<pixel_count>
@@ -26,6 +28,7 @@ BPM,<timestamp_ms>,<camera_bpm>,<m5_bpm>,<quality>
 
 ## Open questions
 
-- Real camera frame rate: nominally 30 fps, but all clocks come from the
-  on-chip RC oscillator. See [camera-bus.md](camera-bus.md).
+- Real camera frame rate: 30.01 fps by the fabric's own clock, but all clocks
+  come from the on-chip RC oscillator. Check it against the PC clock. See
+  [camera-bus.md](camera-bus.md).
 - M5 heart-rate unit logic levels versus the Hello FPGA headers.

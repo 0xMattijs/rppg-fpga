@@ -1,62 +1,109 @@
 #include <stdint.h>
+#include "m2sxxx.h"
+#include "system_m2sxxx.h"
 #include "config.h"
 #include "rppg.h"
+#include "OV7725.h"
+#include "ili9488.h"
 
-/* roi_accumulator register map (word offsets) */
-#define REG_SUM_R   0
-#define REG_SUM_G   1
-#define REG_SUM_B   2
-#define REG_COUNT   3
-#define REG_FRAME   4
+/* rppg_top registers (word offsets); see hdl/src/rppg_top.v */
+#define REG_SUM_R      0
+#define REG_SUM_G      1
+#define REG_SUM_B      2
+#define REG_COUNT      3
+#define REG_FRAME      4
+#define REG_TIMESTAMP  5
+#define REG_GEOMETRY   6
+#define REG_UART       9
+#define UART_BUSY      (1u << 0)
+#define UART_HOST_SEEN (1u << 1)   /* the PC has put the PIC32 in relay mode */
 
-/* Frames buffered between the IRQ and the main loop. An estimate takes a
- * large fraction of a second in soft float, so this must hold more frames
- * than arrive during one estimate. Power of two. */
+/* Frames buffered between the SysTick handler and the main loop. An
+ * estimate takes a large fraction of a second in soft float, so this must
+ * hold more frames than arrive during one estimate. Power of two. */
 #define FRAME_QUEUE 32
 
 typedef struct {
-    uint32_t sum_r, sum_g, sum_b, count, frame;
+    uint32_t sum_r, sum_g, sum_b, count, frame, timestamp_us;
 } frame_sums_t;
 
 static volatile uint32_t *const roi = (volatile uint32_t *)ROI_ACC_BASE;
 
-/* Single producer (IRQ), single consumer (main loop): the IRQ writes only
- * q_head, the main loop writes only q_tail. */
+/* Single producer (SysTick), single consumer (main loop): the handler
+ * writes only q_head, the main loop writes only q_tail. */
 static frame_sums_t queue[FRAME_QUEUE];
 static volatile uint32_t q_head, q_tail;
 static volatile uint32_t queue_overflows;
+static uint32_t last_seen_frame;
 
-/* Frames lost before they reached rppg_push(), from gaps in the fabric
- * frame counter. rppg_push() fills short gaps; this counts them for the log. */
-static uint32_t frames_dropped;
-
-/* TODO(Phase 2): attach to the fabric interrupt line Libero assigns.
- * Read the latched sums here, before the next frame end overwrites them. */
-void FabricIrq0_IRQHandler(void)
+/* The fabric latches each frame's sums at VSYNC and holds them for a whole
+ * frame (33 ms), and there is no fabric interrupt line, so poll at 1 kHz. */
+void SysTick_Handler(void)
 {
+    uint32_t frame = roi[REG_FRAME];
+    if (frame == last_seen_frame)
+        return;
+
+    frame_sums_t f;
+    f.sum_r = roi[REG_SUM_R];
+    f.sum_g = roi[REG_SUM_G];
+    f.sum_b = roi[REG_SUM_B];
+    f.count = roi[REG_COUNT];
+    f.timestamp_us = roi[REG_TIMESTAMP];
+    /* A new frame landed mid-read: try again on the next tick. */
+    if (roi[REG_FRAME] != frame)
+        return;
+    f.frame = frame;
+    last_seen_frame = frame;
+
     uint32_t h = q_head;
     if (h - q_tail >= FRAME_QUEUE) {
         queue_overflows++;      /* shows up as a frame-counter gap */
         return;
     }
-    frame_sums_t *f = &queue[h % FRAME_QUEUE];
-    f->sum_r = roi[REG_SUM_R];
-    f->sum_g = roi[REG_SUM_G];
-    f->sum_b = roi[REG_SUM_B];
-    f->count = roi[REG_COUNT];
-    f->frame = roi[REG_FRAME];
+    queue[h % FRAME_QUEUE] = f;
     q_head = h + 1;
+}
+
+static void uart_putc(char c)
+{
+    while (roi[REG_UART] & UART_BUSY)
+        ;
+    roi[REG_UART] = (uint8_t)c;
+}
+
+static void uart_puts(const char *s)
+{
+    while (*s)
+        uart_putc(*s++);
+}
+
+static void uart_putu(uint32_t v)
+{
+    char buf[10];
+    int n = 0;
+    do {
+        buf[n++] = '0' + v % 10;
+        v /= 10;
+    } while (v);
+    while (n)
+        uart_putc(buf[--n]);
 }
 
 int main(void)
 {
-    rppg_sample_t s;
-    rppg_result_t res;
-    int have_frame = 0;
-    uint32_t last_frame = 0;
+    /* The camera first: OV7725_init() settles exposure for 2 s and then
+     * locks it. The LCD then switches from its start-up screen to video. */
+    OV7725_init();
+    ILI9488_init();
 
-    /* TODO(Phase 1): clock, UART and display init from the reference design. */
+    last_seen_frame = roi[REG_FRAME];
+    SysTick_Config(SystemCoreClock / 1000);
+
+#if ENABLE_DSP
     rppg_init();
+#endif
+    int geometry_sent = 0;
 
     for (;;) {
         if (q_tail == q_head)
@@ -64,21 +111,45 @@ int main(void)
         frame_sums_t f = queue[q_tail % FRAME_QUEUE];
         q_tail++;
 
-        if (have_frame && f.frame - last_frame > 1)
-            frames_dropped += f.frame - last_frame - 1;
-        have_frame = 1;
-        last_frame = f.frame;
+        /* Until the PIC32 relays, a byte sent to it overruns its UART, which
+         * then stops receiving until the board is power-cycled. */
+        if (!(roi[REG_UART] & UART_HOST_SEEN))
+            continue;
 
-        /* TODO(Phase 2): print "frame,ts,sum_r,sum_g,sum_b,count" over UART. */
+        /* One comment line with the camera geometry, for checking the setup.
+         * capture.py skips lines that don't have six fields. */
+        if (!geometry_sent) {
+            uint32_t g = roi[REG_GEOMETRY];
+            uart_puts("# lines ");
+            uart_putu(g & 0x3FF);
+            uart_puts(", pixels per line ");
+            uart_putu(g >> 16);
+            uart_puts("\r\n");
+            geometry_sent = 1;
+        }
+
+        /* frame,timestamp_us,sum_r,sum_g,sum_b,pixel_count (docs/plan.md) */
+        uart_putu(f.frame);         uart_putc(',');
+        uart_putu(f.timestamp_us);  uart_putc(',');
+        uart_putu(f.sum_r);         uart_putc(',');
+        uart_putu(f.sum_g);         uart_putc(',');
+        uart_putu(f.sum_b);         uart_putc(',');
+        uart_putu(f.count);
+        uart_puts("\r\n");
+
+#if ENABLE_DSP
         if (f.count == 0)
             continue;
+        rppg_sample_t s;
+        rppg_result_t res;
         s.frame = f.frame;
-        s.timestamp_us = 0;   /* TODO: timestamp in fabric (see risks) */
+        s.timestamp_us = f.timestamp_us;
         s.r = (float)f.sum_r / f.count;
         s.g = (float)f.sum_g / f.count;
         s.b = (float)f.sum_b / f.count;
         if (rppg_push(&s) && rppg_estimate(&res) == 0) {
             /* TODO(Phase 4): ui_show_bpm(res.bpm, res.quality); */
         }
+#endif
     }
 }

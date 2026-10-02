@@ -16,7 +16,11 @@
 #define HARMONIC_RATIO     0.25f /* report half the peak frequency when its power is at
                                     least this fraction of the peak's */
 
-/* Fabric APB base for roi_accumulator; set once the Libero design is fixed. */
-#define ROI_ACC_BASE       0x50000000u
+/* Fabric APB base of rppg_top (hdl/src/rppg_top.v) on the FIC_0 bus. */
+#define ROI_ACC_BASE       0x30001000u
+
+/* Run POS and the FFT on the board (Phase 3). Off, the firmware only streams
+ * per-frame sums over UART. */
+#define ENABLE_DSP         0
 
 #endif

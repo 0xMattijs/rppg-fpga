@@ -5,6 +5,7 @@ Microchip's DirectC programmer. Microchip drives it from a Windows-only GUI;
 this module speaks the same protocol, worked out from that GUI and the PIC
 firmware:
 
+    host '%Ex'          leave relay mode, if capture.py left the PIC in it
     host '#'            PIC '#'
     host 's' 'a' 'e'    PIC 'h' 'k' 'r'
                         PIC 'A'   asks for the action
@@ -56,6 +57,10 @@ def _expect(ser, send, want):
 
 def connect(ser, tries=8):
     """Wake the PIC with '#' until it echoes."""
+    # In relay mode the PIC passes '#' on to the FPGA; '%Ex' leaves it. Out of
+    # relay mode, the PIC ignores all three bytes.
+    ser.write(b"%Ex")
+    time.sleep(0.3)
     ser.reset_input_buffer()
     for _ in range(tries):
         ser.write(b"#")

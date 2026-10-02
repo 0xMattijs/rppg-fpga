@@ -9,7 +9,7 @@ the Cortex-M3.
 
 ```
 camera ──► fabric: ROI / skin mask / RGB accumulators ──► per-frame sums
-                                                              │ (APB + IRQ)
+                                                              │ (APB, polled)
                                                               ▼
             display ◄── Cortex-M3: normalize ─ POS ─ band-pass ─ FFT ─ BPM
                                                               ▲
@@ -33,7 +33,7 @@ camera ──► fabric: ROI / skin mask / RGB accumulators ──► per-frame 
 See [docs/plan.md](docs/plan.md) for the seven-phase build plan.
 
 - [x] Phase 1: Reference design
-- [ ] Phase 2: ROI accumulator in fabric
+- [x] Phase 2: ROI accumulator in fabric
 - [ ] Phase 3: Signal processing on the Cortex-M3
 - [ ] Phase 4: Touch UI
 - [ ] Phase 5: Validation with the M5 sensor
@@ -48,10 +48,13 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # Program the board through its on-board PIC (no FlashPro needed)
-python -m rppg.program program ../libero/build/export/rppg_ref.dat
+python -m rppg.program program ../libero/build/export/rppg.dat
 
-# Record per-frame sums from the board
-python -m rppg.capture --port /dev/ttyUSB0 --out ../data/session.csv
+# Record per-frame sums from the board (through the same PIC, /dev/ttyACM0)
+python -m rppg.capture --out ../data/session.csv
+
+# Check a recording: frame rate, dropped frames, band-passed green channel
+python -m rppg.raw ../data/session.csv --plot
 
 # Estimate BPM offline with POS
 python -m rppg.pos ../data/session.csv --plot

@@ -1,11 +1,14 @@
 # Cortex-M3 firmware
 
-Build with SoftConsole. Import the SmartFusion2 drivers and CMSIS files that
-Libero generates into `drivers/` (not committed until Phase 1 settles them).
+Build with `make` after sourcing `~/Microchip/setup-microchip-tools.sh`.
+CMSIS, HAL, the MSS drivers, and the LCD driver come from the reference
+project (see `sf2.mk` and `../libero/README.md`). The output,
+`build/rppg.hex`, goes to `libero/build.tcl`.
 
 | File | Purpose | Phase |
 |------|---------|-------|
-| `src/main.c` | Frame IRQ, ring buffer, UART output | 2 |
+| `src/main.c` | Frame polling, ring buffer, UART output | 2 |
+| `src/drivers/ov7725.c` | Camera set-up; locks exposure and white balance | 1 |
 | `src/dsp/rppg.c` | Normalization, POS, band-pass, FFT, peak pick | 3 |
 | `src/ui/ui.c` | BPM digits, waveform, quality, ROI drag | 4 |
 | `src/drivers/m5_hr.c` | M5 heart-rate unit over I2C | 5 |
