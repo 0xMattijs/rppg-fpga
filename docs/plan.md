@@ -26,6 +26,6 @@ BPM,<timestamp_ms>,<camera_bpm>,<m5_bpm>,<quality>
 
 ## Open questions
 
-- Camera resolution, pixel format, and register interface (check the kit
-  docs before Phase 2).
+- Real camera frame rate: nominally 30 fps, but all clocks come from the
+  on-chip RC oscillator. See [camera-bus.md](camera-bus.md).
 - M5 heart-rate unit logic levels versus the Hello FPGA headers.
