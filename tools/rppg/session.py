@@ -49,7 +49,7 @@ def terminal_keys():
 
 
 def record(args, base, logfile):
-    """Steps 1 to 3. Returns True if a recording was made."""
+    """Steps 1 to 3. Returns True if the recording has estimates."""
     win = Preview(title=f"rPPG session: {args.name}")
     rec = None
     saved = False
@@ -57,6 +57,7 @@ def record(args, base, logfile):
         send(ser, "preview 1")
         reader = LineReader(ser)
         state = "framing"
+        why = "the window was closed"
         win.set_status("Forehead in the green box? C: calibrate   Q: quit")
         log("Check the framing in the preview window, then press C to calibrate.",
             logfile)
@@ -80,6 +81,7 @@ def record(args, base, logfile):
                         print(line, file=sys.stderr)
                 keys = win.pop_keys() + terminal_keys()
                 if "q" in keys:
+                    why = "Q was pressed"
                     break
                 if "c" in keys and state in ("framing", "ready"):
                     state = "calibrating"
@@ -93,18 +95,20 @@ def record(args, base, logfile):
                 if state == "recording":
                     left = args.minutes * 60 - (time.time() - t0)
                     if left <= 0:
+                        why = "the time was up"
                         break
                     win.set_status(f"Recording, {int(left) // 60}:{int(left) % 60:02d} "
                                    "left   Q: stop early")
                 win.pump()
         except KeyboardInterrupt:
-            pass
+            why = "Ctrl+C was pressed"
         finally:
             send(ser, "preview 0")
+            log(f"Stopped {state}: {why}.", logfile)
             if rec:
                 rec.close()
     win.plt.close(win.fig)
-    return rec is not None and rec.rows > 0
+    return rec is not None and rec.est_path.stat().st_size > 0
 
 
 def is_health_export(path):
@@ -165,7 +169,8 @@ def main():
         print("Start a Workout on the watch now, and sit in the recording position "
               "with the lamp on.", file=sys.stderr)
         if not record(args, base, logfile):
-            log("No recording made.", logfile)
+            log("No estimates recorded (an estimate needs 10 s); nothing to "
+                "compare.", logfile)
             return
         t_end = time.time()
         report(check, logfile)

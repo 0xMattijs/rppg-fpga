@@ -36,6 +36,10 @@ class Preview:
         from matplotlib.patches import Rectangle
 
         self.plt = plt
+        # The keys are ours (session.py); drop matplotlib's shortcuts, such
+        # as Q to close the window and S to save.
+        for k in [k for k in matplotlib.rcParams if k.startswith("keymap.")]:
+            matplotlib.rcParams[k] = []
         self.mirror = mirror
         self.save = save
         self.img = np.zeros((H, W, 3), np.uint8)
