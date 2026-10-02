@@ -23,12 +23,15 @@ def pos(rgb, fs, win_s=1.6):
     w = int(win_s * fs)
     h = np.zeros(n)
     proj = np.array([[0, 1, -1], [-2, 1, 1]])
-    for t in range(n - w + 1):
-        c = rgb[t:t + w]
-        cn = c / c.mean(axis=0)
-        s = cn @ proj.T
-        p = s[:, 0] + (s[:, 0].std() / (s[:, 1].std() + 1e-9)) * s[:, 1]
-        h[t:t + w] += p - p.mean()
+    # All windows at once: c[t] is rgb[t:t + w], shape (windows, 3, w).
+    c = np.lib.stride_tricks.sliding_window_view(rgb, w, axis=0)
+    cn = c / c.mean(axis=2, keepdims=True)
+    s = np.einsum("ij,tjw->tiw", proj, cn)
+    alpha = s[:, 0].std(axis=1) / (s[:, 1].std(axis=1) + 1e-9)
+    p = s[:, 0] + alpha[:, None] * s[:, 1]
+    p -= p.mean(axis=1, keepdims=True)
+    for k in range(w):                      # overlap-add
+        h[k:k + len(p)] += p[:, k]
     return h
 
 

@@ -53,6 +53,12 @@ python -m rppg.capture --port /dev/ttyUSB0 --out ../data/session.csv
 # Estimate BPM offline with POS
 python -m rppg.pos ../data/session.csv --plot
 
+# Make a synthetic session, with drift, flicker, motion, and dropped frames
+python -m rppg.synth ../data/synth.csv --bpm 72 --realistic
+
+# Score POS against the true BPM as each effect grows (about 1 minute)
+python -m rppg.stress
+
 # Compare against the M5 reference (Phase 5)
 python -m rppg.validate ../data/log.csv
 ```
