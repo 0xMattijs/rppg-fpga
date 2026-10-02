@@ -38,12 +38,33 @@ def bandpass(x, fs, band=HR_BAND, order=3):
 
 
 def estimate_bpm(x, fs, nfft=512, band=HR_BAND):
-    spec = np.abs(np.fft.rfft(x * np.hanning(len(x)), n=max(nfft, len(x)))) ** 2
-    f = np.fft.rfftfreq(max(nfft, len(x)), 1 / fs)
-    m = (f >= band[0]) & (f <= band[1])
-    k = np.argmax(spec[m])
-    quality = spec[m][k] / spec[m].sum()
-    return f[m][k] * 60, quality, f, spec
+    nfft = max(nfft, len(x))
+    spec = np.abs(np.fft.rfft(x * np.hanning(len(x)), n=nfft)) ** 2
+    f = np.fft.rfftfreq(nfft, 1 / fs)
+    idx = np.flatnonzero((f >= band[0]) & (f <= band[1]))
+    k = idx[np.argmax(spec[idx])]
+    quality = spec[k] / spec[idx].sum()
+
+    # Parabolic interpolation on power across the peak bin and its neighbors.
+    a, b, c = spec[k - 1], spec[k], spec[k + 1]
+    den = a - 2 * b + c
+    delta = 0.5 * (a - c) / den if den < 0 else 0.0
+    return (k + delta) * fs / nfft * 60, quality, f, spec
+
+
+def track(rgb, fs, n=300, step=30, alpha=0.3, nfft=512):
+    """Estimate every `step` frames over the last `n` frames, as the firmware does.
+
+    Returns rows of (frame, raw_bpm, smoothed_bpm, quality). Smoothing is an
+    exponential moving average seeded with the first estimate.
+    """
+    rows, smooth = [], None
+    for end in range(n, len(rgb) + 1, step):
+        pulse = bandpass(pos(rgb[end - n:end], fs), fs)
+        bpm, q, _, _ = estimate_bpm(pulse, fs, nfft)
+        smooth = bpm if smooth is None else smooth + alpha * (bpm - smooth)
+        rows.append((end - 1, bpm, smooth, q))
+    return rows
 
 
 def main():

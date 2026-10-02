@@ -2,7 +2,8 @@
  *
  * rppg_estimate() runs the whole chain over the last WINDOW_SAMPLES frames:
  * POS with overlap-add, zero-phase band-pass (scipy filtfilt), Hann window,
- * FFT, and the strongest in-band peak. tools/rppg/check_firmware.py builds
+ * FFT, the strongest in-band peak with parabolic interpolation, and an
+ * exponential moving average across estimates (pos.track). tools/rppg/check_firmware.py builds
  * this file on the PC and compares it against pos.py.
  */
 #include <math.h>
@@ -26,6 +27,7 @@
 
 static rppg_sample_t window[WINDOW_SAMPLES];
 static int head, filled;
+static float bpm_smooth;     /* < 0 until the first estimate */
 
 /* Work buffers, static so the stack stays small. */
 static float rgb[WINDOW_SAMPLES][3];
@@ -38,6 +40,7 @@ void rppg_init(void)
 {
     head = 0;
     filled = 0;
+    bpm_smooth = -1.0f;
     for (int k = 0; k < FFT_SIZE / 2; k++) {
         cos_tab[k] = cosf(2.0f * PI_F * k / FFT_SIZE);
         sin_tab[k] = sinf(2.0f * PI_F * k / FFT_SIZE);
@@ -207,8 +210,20 @@ int rppg_estimate(rppg_result_t *out)
     if (total <= 0)
         return -1;
 
-    out->bpm = kbest * df * 60.0f;
+    /* Parabolic interpolation on power. kmin >= 1 and kmax < FFT_SIZE / 2,
+     * so both neighbors exist. */
+    float a = re[kbest - 1] * re[kbest - 1] + im[kbest - 1] * im[kbest - 1];
+    float c = re[kbest + 1] * re[kbest + 1] + im[kbest + 1] * im[kbest + 1];
+    float den = a - 2.0f * pbest + c;
+    float delta = den < 0.0f ? 0.5f * (a - c) / den : 0.0f;
+
+    out->bpm_raw = (kbest + delta) * df * 60.0f;
     out->quality = pbest / total;
+    if (bpm_smooth < 0.0f)
+        bpm_smooth = out->bpm_raw;
+    else
+        bpm_smooth += BPM_SMOOTH_ALPHA * (out->bpm_raw - bpm_smooth);
+    out->bpm = bpm_smooth;
     return 0;
 }
 

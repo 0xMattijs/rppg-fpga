@@ -22,6 +22,7 @@ int main(void)
 {
     rppg_sample_t s;
     rppg_result_t res;
+    int since_estimate = 0;
 
     /* TODO(Phase 1): clock, UART and display init from the reference design. */
     rppg_init();
@@ -43,6 +44,9 @@ int main(void)
         /* TODO(Phase 2): print "frame,ts,r,g,b,n" over UART. */
         rppg_push(&s);
 
+        if (++since_estimate < ESTIMATE_EVERY)
+            continue;
+        since_estimate = 0;
         if (rppg_estimate(&res) == 0) {
             /* TODO(Phase 4): ui_show_bpm(res.bpm, res.quality); */
         }
