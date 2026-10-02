@@ -21,6 +21,9 @@ Then, until DirectC prints "End DirectC Demo", the PIC sends:
 
 All integers are little-endian. If a session stops mid-request, the PIC waits
 forever; unplug and replug the board to reset it.
+
+After programming, power-cycle the board. Until then the camera is not set up
+and the LCD shows static.
 """
 import argparse
 import re
@@ -125,6 +128,8 @@ def main():
         except ProtocolError as e:
             sys.exit(f"\nerror: {e}")
     print(f"\n{args.action}: exit code {code} after {time.monotonic() - start:.0f} s")
+    if args.action == "program" and code == 0:
+        print("Unplug and replug the board to start the new design.")
     sys.exit(0 if code == 0 else 1)
 
 
