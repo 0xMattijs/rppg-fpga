@@ -192,7 +192,7 @@ uint8_t ReadReg(uint8_t addr)
 }
 void delay_us(uint64_t x)
 {
-	for(uint64_t j; j<x; j++)
+	for(uint64_t j = 0; j<x; j++)
 	{
 		for(int i =0; i<100; i++)
 		{
