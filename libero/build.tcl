@@ -66,12 +66,19 @@ run_tool -name {GENERATEPROGRAMMINGDATA}
 # (SC\hellofpga_lcd_cam_ff\Release\hellofpga_lcd_cam_ff.hex), so without a
 # firmware image Libero keeps the eNVM data stored in the project.
 if {$firmware_hex ne "-"} {
-    # The client size is in bytes (8-bit words): count the Intel HEX data bytes.
+    # The client size is in bytes (8-bit words) and must cover the image's
+    # whole address span, gaps included: find the end of the last data record.
     set n_bytes 0
+    set upper 0
     set f [open $firmware_hex r]
     while {[gets $f line] >= 0} {
-        if {[string range $line 7 8] eq "00"} {
-            incr n_bytes [scan [string range $line 1 2] %x]
+        set type [string range $line 7 8]
+        if {$type eq "04"} {
+            set upper [expr {[scan [string range $line 9 12] %x] << 16}]
+        } elseif {$type eq "00"} {
+            set end [expr {$upper + [scan [string range $line 3 6] %x] \
+                           + [scan [string range $line 1 2] %x]}]
+            if {$end > $n_bytes} { set n_bytes $end }
         }
     }
     close $f
