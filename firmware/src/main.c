@@ -21,7 +21,7 @@
 /* Frames buffered between the SysTick handler and the main loop. An
  * estimate takes a large fraction of a second in soft float, so this must
  * hold more frames than arrive during one estimate. Power of two. */
-#define FRAME_QUEUE 32
+#define FRAME_QUEUE 64
 
 typedef struct {
     uint32_t sum_r, sum_g, sum_b, count, frame, timestamp_us;
@@ -90,6 +90,27 @@ static void uart_putu(uint32_t v)
         uart_putc(buf[--n]);
 }
 
+#if ENABLE_DSP
+/* Prints a non-negative float with a fixed number of decimals (at most 6).
+ * Saves linking printf's float support. */
+static void uart_putf(float v, int decimals)
+{
+    uint32_t scale = 1;
+    for (int i = 0; i < decimals; i++)
+        scale *= 10;
+    uint32_t fixed = (uint32_t)(v * scale + 0.5f);
+    uart_putu(fixed / scale);
+    if (!decimals)
+        return;
+    uart_putc('.');
+    uint32_t frac = fixed % scale;
+    for (scale /= 10; scale; scale /= 10) {
+        uart_putc('0' + frac / scale);
+        frac %= scale;
+    }
+}
+#endif
+
 int main(void)
 {
     /* The camera first: OV7725_init() settles exposure for 2 s and then
@@ -103,7 +124,7 @@ int main(void)
 #if ENABLE_DSP
     rppg_init();
 #endif
-    int geometry_sent = 0;
+    int host_seen = 0, geometry_sent = 0;
 
     for (;;) {
         if (q_tail == q_head)
@@ -113,8 +134,16 @@ int main(void)
 
         /* Until the PIC32 relays, a byte sent to it overruns its UART, which
          * then stops receiving until the board is power-cycled. */
-        if (!(roi[REG_UART] & UART_HOST_SEEN))
-            continue;
+        if (!host_seen) {
+            if (!(roi[REG_UART] & UART_HOST_SEEN))
+                continue;
+            host_seen = 1;
+#if ENABLE_DSP
+            /* Start the estimates at the first recorded frame, so the PC
+             * can repeat them from the recording (rppg.check_board). */
+            rppg_init();
+#endif
+        }
 
         /* One comment line with the camera geometry, for checking the setup.
          * capture.py skips lines that don't have six fields. */
@@ -147,9 +176,24 @@ int main(void)
         s.r = (float)f.sum_r / f.count;
         s.g = (float)f.sum_g / f.count;
         s.b = (float)f.sum_b / f.count;
-        if (rppg_push(&s) && rppg_estimate(&res) == 0) {
-            /* TODO(Phase 4): ui_show_bpm(res.bpm, res.quality); */
-        }
+        if (!rppg_push(&s))
+            continue;
+        uint32_t start = DWT->CYCCNT;
+        if (rppg_estimate(&res) != 0)
+            continue;
+        uint32_t us = (DWT->CYCCNT - start) / (SystemCoreClock / 1000000u);
+
+        /* EST <frame> <bpm_raw> <bpm> <quality> <estimate_us>: the format
+         * of firmware/test/host_rppg, plus the time the estimate took. */
+        uart_puts("EST ");
+        uart_putu(f.frame);         uart_putc(' ');
+        uart_putf(res.bpm_raw, 2);  uart_putc(' ');
+        uart_putf(res.bpm, 2);      uart_putc(' ');
+        uart_putf(res.quality, 4);  uart_putc(' ');
+        uart_putu(us);
+        uart_puts("\r\n");
+        /* TODO(Phase 4): ui_show_bpm(res.bpm, res.quality). The estimates
+         * then have to run before the PC connects too. */
 #endif
     }
 }

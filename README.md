@@ -34,7 +34,7 @@ See [docs/plan.md](docs/plan.md) for the seven-phase build plan.
 
 - [x] Phase 1: Reference design
 - [x] Phase 2: ROI accumulator in fabric
-- [ ] Phase 3: Signal processing on the Cortex-M3
+- [x] Phase 3: Signal processing on the Cortex-M3
 - [ ] Phase 4: Touch UI
 - [ ] Phase 5: Validation with the M5 sensor
 - [ ] Phase 6: Multi-ROI grid and skin detection
@@ -50,8 +50,12 @@ pip install -r requirements.txt
 # Program the board through its on-board PIC (no FlashPro needed)
 python -m rppg.program program ../libero/build/export/rppg.dat
 
-# Record per-frame sums from the board (through the same PIC, /dev/ttyACM0)
+# Record per-frame sums and the board's BPM estimates (through the same PIC,
+# /dev/ttyACM0); the estimates go to ../data/session.est
 python -m rppg.capture --out ../data/session.csv
+
+# Check the board's estimates against the host build of the same C code
+python -m rppg.check_board ../data/session.csv
 
 # Check a recording: frame rate, dropped frames, band-passed green channel
 python -m rppg.raw ../data/session.csv --plot

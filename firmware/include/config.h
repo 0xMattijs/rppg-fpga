@@ -19,8 +19,8 @@
 /* Fabric APB base of rppg_top (hdl/src/rppg_top.v) on the FIC_0 bus. */
 #define ROI_ACC_BASE       0x30001000u
 
-/* Run POS and the FFT on the board (Phase 3). Off, the firmware only streams
- * per-frame sums over UART. */
-#define ENABLE_DSP         0
+/* Run POS and the FFT on the board (Phase 3) and send an EST line per
+ * estimate. Off, the firmware only streams per-frame sums over UART. */
+#define ENABLE_DSP         1
 
 #endif

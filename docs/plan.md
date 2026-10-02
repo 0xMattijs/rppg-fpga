@@ -20,6 +20,14 @@ see its docstring.
 <frame_counter>,<timestamp_us>,<sum_r>,<sum_g>,<sum_b>,<pixel_count>
 ```
 
+After each BPM estimate (Phase 3), once a second, it also sends the
+format of `firmware/test/host_rppg` plus the time the estimate took.
+`capture.py` writes these lines to a `.est` file next to the CSV.
+
+```
+EST <frame_counter> <bpm_this_window> <bpm_smoothed> <quality> <estimate_us>
+```
+
 During validation (Phase 5) it sends one line per second instead:
 
 ```

@@ -7,5 +7,9 @@
 
 NAME := rppg
 OUT  := build/rppg
-APP_SRCS = src/main.c
+APP_SRCS = src/main.c src/dsp/rppg.c
 include sf2.mk
+
+# An estimate must finish within ESTIMATE_EVERY frames (1 s); at -O0 it
+# takes 1.04 s and the frame queue overflows. The rest stays at -O0.
+$(call obj,src/dsp/rppg.c): CFLAGS += -O2
