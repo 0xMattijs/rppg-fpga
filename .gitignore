@@ -24,3 +24,6 @@ firmware/Release/
 # Simulation
 *.vcd
 tb
+
+# Host test build
+firmware/test/host_rppg
