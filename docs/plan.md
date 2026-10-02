@@ -20,6 +20,9 @@ see its docstring.
 <frame_counter>,<timestamp_us>,<sum_r>,<sum_g>,<sum_b>,<pixel_count>
 ```
 
+Before the first frame it sends one comment line, starting with `#`, with
+the camera geometry and the cache registers at boot.
+
 After each BPM estimate (Phase 3), once a second, it also sends the
 format of `firmware/test/host_rppg` plus the time the estimate took.
 `capture.py` writes these lines to a `.est` file next to the CSV.
@@ -27,6 +30,14 @@ format of `firmware/test/host_rppg` plus the time the estimate took.
 ```
 EST <frame_counter> <bpm_this_window> <bpm_smoothed> <quality> <estimate_us>
 ```
+
+The PC can send text commands back, one per line (Phase 4; see
+`firmware/include/console.h` and `tools/rppg/send.py`). The board answers
+each with a comment line, `# ok: <command>` or `# error: <usage>`, and
+reports an ROI change as `# roi <x0> <y0> <x1> <y1>`. After `restart`, it
+restarts the estimates and reports the first frame of the new run as
+`# restart <frame>`; `capture.py` sends `restart` and records from that
+frame on.
 
 During validation (Phase 5) it sends one line per second instead:
 

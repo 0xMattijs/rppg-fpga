@@ -5,7 +5,8 @@
 //   - Passes PCLK, HREF, VSYNC, and DATA on to the LCD path, three flops
 //     later. Every signal gets the same delay, so the LCD path samples the
 //     bus at the same phase as before, and VSYNC is now synchronized.
-//   - Paints a green border just outside the ROI into the LCD copy.
+//   - Paints a green border just outside the ROI into the LCD copy, and
+//     whatever overlay.v asks for (Phase 4) on top of it.
 //   - Assembles RGB565 pixels from the untouched bytes for roi_accumulator.
 module cam_bus #(
     parameter XW = 11,
@@ -34,6 +35,12 @@ module cam_bus #(
     input  wire [YW-1:0] roi_y0,
     input  wire [YW-1:0] roi_y1,
 
+    // Overlay: the pixel under the bus, and what to do with it
+    output wire [XW-1:0] ovl_x,
+    output wire [YW-1:0] ovl_y,
+    input  wire [1:0]    ovl_mode,    // overlay.v MODE_*
+    input  wire [15:0]   ovl_color,
+
     // To roi_accumulator
     output reg           frame_tick,  // one cycle at each VSYNC rise
     output reg           pix_valid,
@@ -49,6 +56,7 @@ module cam_bus #(
 );
 
     localparam [15:0] BORDER_COLOR = 16'h07E0;   // RGB565 green
+    localparam [1:0]  MODE_PASS = 2'd0, MODE_PAINT = 2'd1, MODE_DARKEN = 2'd2;
 
     // Synchronizers. Stage 2 is the first safe one to use; stages 3 and 4
     // find edges.
@@ -88,15 +96,32 @@ module cam_bus #(
                     line_cnt >= roi_y0 && line_cnt < roi_y1;
     wire on_border = in_outer && !in_inner;
 
-    // The border decision for a byte holds from its strobe to the next one,
-    // so the LCD path sees it whenever it samples.
-    reg paint;
-    wire paint_now = strobe ? on_border : paint;
+    // overlay.v answers for (x, line_cnt) within 2 cycles; both hold from
+    // one strobe to the next.
+    assign ovl_x = x;
+    assign ovl_y = line_cnt;
+
+    // The decision for a byte, and which byte of the pixel it is, hold from
+    // its strobe to the next one, so the LCD path sees it whenever it samples.
+    reg  [1:0]  mode;
+    reg  [15:0] color;
+    reg         lo_byte;
+    wire [1:0]  mode_new  = ovl_mode != MODE_PASS ? ovl_mode :
+                            on_border ? MODE_PAINT : MODE_PASS;
+    wire [15:0] color_new = ovl_mode != MODE_PASS ? ovl_color : BORDER_COLOR;
+    wire [1:0]  mode_now  = strobe ? mode_new  : mode;
+    wire [15:0] color_now = strobe ? color_new : color;
+    wire        lo_now    = strobe ? byte_cnt[0] : lo_byte;
+
+    // Halves each RGB565 channel. The low byte needs G's top bit, which
+    // came in the high byte.
+    wire [7:0] dark = lo_now ? {hi_byte[0], data_s2[7:6], 1'b0, data_s2[4:1]}
+                             : {1'b0, data_s2[7:4], 1'b0, data_s2[2:1]};
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pclk_o <= 0; href_o <= 0; vsync_o <= 0; data_o <= 0;
-            paint <= 0;
+            mode <= MODE_PASS; color <= 0; lo_byte <= 0;
             byte_cnt <= 0; line_cnt <= 0; hi_byte <= 0;
             frame_tick <= 0; pix_valid <= 0;
             pix_x <= 0; pix_y <= 0; pix_r <= 0; pix_g <= 0; pix_b <= 0;
@@ -106,11 +131,14 @@ module cam_bus #(
             pclk_o  <= pclk_s[1];
             href_o  <= href_s[1];
             vsync_o <= vsync_s[1];
-            paint   <= paint_now;
-            if (paint_now)
-                data_o <= byte_cnt[0] ? BORDER_COLOR[7:0] : BORDER_COLOR[15:8];
-            else
-                data_o <= data_s2;
+            mode    <= mode_now;
+            color   <= color_now;
+            lo_byte <= lo_now;
+            case (mode_now)
+                MODE_PAINT:  data_o <= lo_now ? color_now[7:0] : color_now[15:8];
+                MODE_DARKEN: data_o <= dark;
+                default:     data_o <= data_s2;
+            endcase
 
             frame_tick <= vsync_rise;
             pix_valid  <= 1'b0;

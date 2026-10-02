@@ -42,6 +42,16 @@ See [docs/plan.md](docs/plan.md) for the seven-phase build plan.
 
 ## PC tools
 
+On Linux, stop ModemManager from probing the board's USB serial port
+(Microchip MCP2221). Its AT commands reach the FPGA through the PIC32, which
+can stall the serial link and used to change the LCD colors:
+
+```bash
+echo 'ATTRS{idVendor}=="04d8", ATTRS{idProduct}=="00dd", ENV{ID_MM_DEVICE_IGNORE}="1"' \
+  | sudo tee /etc/udev/rules.d/99-hello-fpga.rules
+sudo udevadm control --reload-rules
+```
+
 ```bash
 cd tools
 python -m venv .venv && source .venv/bin/activate
@@ -56,6 +66,9 @@ python -m rppg.capture --out ../data/session.csv
 
 # Check the board's estimates against the host build of the same C code
 python -m rppg.check_board ../data/session.csv
+
+# Send console commands: color test pattern, ROI, raw LCD commands
+python -m rppg.send "test 1" "roi 240 180 400 300"
 
 # Check a recording: frame rate, dropped frames, band-passed green channel
 python -m rppg.raw ../data/session.csv --plot

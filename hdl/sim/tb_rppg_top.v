@@ -1,14 +1,18 @@
 // Testbench for rppg_top: a small camera frame through the whole block.
 // Run with:
 //   iverilog -o tb hdl/sim/tb_rppg_top.v hdl/src/rppg_top.v hdl/src/cam_bus.v \
-//     hdl/src/roi_accumulator.v hdl/src/uart_tx.v && vvp tb
+//     hdl/src/roi_accumulator.v hdl/src/uart_tx.v hdl/src/uart_rx.v \
+//     hdl/src/overlay.v && vvp tb
+//
+// The overlay is on, and its darkened panel starts at (8, 8), which covers
+// part of the ROI border. tb_overlay.v checks the rest of its layout.
 //
 // The camera model changes HREF and DATA on PCLK's falling edge, like the
 // OV7725, with PCLK at 24 MHz against a 100 MHz system clock. A model of
 // WRITE_LSRAM's sampling checks what the LCD path sees.
 `timescale 1ns/1ps
 module tb_rppg_top;
-    localparam W = 24, H = 12;                 // frame size in pixels
+    localparam W = 24, H = 136;                // frame size in pixels; reaches the bar
     localparam X0 = 8, X1 = 14, Y0 = 4, Y1 = 8; // ROI
     localparam B = 4;                          // border width in cam_bus
 
@@ -16,6 +20,7 @@ module tb_rppg_top;
     always #5 clk = ~clk;
 
     reg pclk = 0, href = 0, vsync = 0, rx = 1;
+    reg [2:0] sw_n = 3'b111;
     reg [7:0] data = 0;
     always #20.833 pclk = ~pclk;
 
@@ -32,12 +37,18 @@ module tb_rppg_top;
         .lcd_data_o(lcd_data),
         .psel_i(psel), .penable_i(penable), .pwrite_i(pwrite),
         .paddr_i(paddr), .pwdata_i(pwdata), .prdata_o(prdata), .lcd_psel_o(lcd_psel),
-        .uart_rx_i(rx), .uart_tx_o(tx)
+        .uart_rx_i(rx), .uart_tx_o(tx),
+        .sw1_n_i(sw_n[0]), .sw2_n_i(sw_n[1]), .sw3_n_i(sw_n[2])
     );
 
     // Pixel (x, y) is R = x, G = y, B = x + y, in RGB565 fields.
     function [15:0] pixel(input integer x, input integer y);
         pixel = {x[4:0], y[5:0], x[4:0] + y[4:0]};
+    endfunction
+
+    // overlay.v's darkening: each channel halved.
+    function [15:0] darken(input [15:0] p);
+        darken = {1'b0, p[15:12], 1'b0, p[10:6], 1'b0, p[4:1]};
     endfunction
 
     integer errors = 0;
@@ -112,6 +123,18 @@ module tb_rppg_top;
         end
     end
 
+    // One byte into the RX pin at 230400 baud.
+    task uart_send(input [7:0] b);
+        integer i;
+        begin
+            rx = 0; #4340;
+            for (i = 0; i < 8; i = i + 1) begin
+                rx = b[i]; #4340;
+            end
+            rx = 1; #4340;
+        end
+    endtask
+
     // UART receiver for one byte at 230400 baud.
     reg [7:0] rx_byte;
     task uart_receive;
@@ -139,6 +162,22 @@ module tb_rppg_top;
         check(rd == {16'd400, 16'd240}, "default ROI_X");
         apb_write(32'h3000101C, (X1 << 16) | X0);
         apb_write(32'h30001020, (Y1 << 16) | Y0);
+
+        // Overlay on. A waveform write must not reach the registers.
+        apb_write(32'h30001028, 1);
+        apb_write(32'h3000142C, 32'h3FFF);
+        apb_write(32'h3000102C, 32'h12345);
+        apb_write(32'h30001030, 32'hF800_0064);
+        apb_write(32'h30001424, 32'h0);
+        apb_read(32'h30001028); check(rd == 1, "OVL_CTRL");
+        apb_read(32'h3000102C); check(rd == 32'h12345, "OVL_DIGITS");
+        apb_write(32'h3000102C, 0);      // digits off; tb_overlay checks them
+        apb_read(32'h30001030); check(rd == 32'hF800_0064, "OVL_BAR");
+        apb_read(32'h30001024); check(rd == 0, "waveform write missed UART");
+        apb_read(32'h30001040); check(rd == 32'hFFE0_FFFF, "OVL_COLOR reset");
+        apb_write(32'h30001040, 32'hFE00_FE9C);
+        apb_read(32'h30001040); check(rd == 32'hFE00_FE9C, "OVL_COLOR");
+        apb_read(32'h30001000); check(rd != 32'hFE00_FE9C, "OVL_COLOR not aliased at 0x00");
 
         // PSEL reaches apb3_if only below 0x1000.
         @(posedge clk) begin psel <= 1; paddr <= 32'h3000070C; end
@@ -174,7 +213,11 @@ module tb_rppg_top;
             for (x = 0; x < W; x = x + 1) begin
                 in_roi = x >= X0 && x < X1 && y >= Y0 && y < Y1;
                 in_box = x >= X0 - B && x < X1 + B && y >= Y0 - B && y < Y1 + B;
-                p = (in_box && !in_roi) ? 16'h07E0 : pixel(x, y);
+                // Quality bar: 0x64 - 16 = 84 pixels long, so it covers the
+                // frame's whole width from x 16.
+                p = (x >= 16 && y >= 128) ? 16'hF800 :
+                    (x >= 8 && y >= 8 && y < 160) ? darken(pixel(x, y)) :
+                    (in_box && !in_roi) ? 16'h07E0 : pixel(x, y);
                 got = {seen[y][2 * x], seen[y][2 * x + 1]};
                 if (got !== p) begin
                     $display("FAIL: LCD pixel (%0d,%0d) = %h, expected %h", x, y, got, p);
@@ -197,6 +240,27 @@ module tb_rppg_top;
         check(rx_byte == 8'hA5, "UART byte");
         #3000;
         apb_read(32'h30001024); check(rd == 2, "UART idle after the byte");
+
+        // UART receiver. The host-detection start bit above came in as 0xFF.
+        apb_read(32'h30001038); check(rd == 32'h1FF, "RX: start bit read as 0xFF");
+        uart_send(8'h6C);
+        uart_send(8'h0A);
+        apb_read(32'h30001038); check(rd == 32'h16C, "RX: first byte");
+        apb_read(32'h30001038); check(rd == 32'h10A, "RX: second byte");
+        apb_read(32'h30001038); check(rd[8] == 1'b0, "RX: empty");
+        apb_read(32'h30001038); check(rd[9] == 1'b0, "RX: no overflow");
+
+        // Color gains: 1.0 after reset, then writable.
+        apb_read(32'h3000103C); check(rd == {2'b0, 10'h80, 10'h80, 10'h80}, "COLOR_GAIN reset");
+        apb_write(32'h3000103C, {2'b0, 10'h081, 10'h082, 10'h083});
+        apb_read(32'h3000103C); check(rd == {2'b0, 10'h081, 10'h082, 10'h083}, "COLOR_GAIN write");
+
+        // Buttons
+        apb_read(32'h30001034); check(rd == 0, "no button pressed");
+        sw_n = 3'b101;
+        repeat (4) @(posedge clk);
+        apb_read(32'h30001034); check(rd == 2, "SW2 pressed");
+        sw_n = 3'b111;
 
         if (errors == 0) $display("PASS");
         else $display("%0d errors", errors);

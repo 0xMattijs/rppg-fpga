@@ -38,11 +38,17 @@ takes about 2.5 minutes.
 `rppg_top.tcl` edits the TOP SmartDesign:
 
 - The camera pins feed `RPPG_0`, which passes them on to `line_write_read_0`
-  three flops later, with a green border drawn around the ROI.
+  three flops later, with a green border drawn around the ROI and the
+  display overlay (`hdl/src/overlay.v`: BPM digits, quality bar, waveform)
+  drawn on top.
 - `RPPG_0` is an APB target at 0x30001000 on the FIC_0 bus. The reference
   joined the bus to `apb3_if_0` with one bus-interface net; the script
   replaces it with plain nets and gates `apb3_if_0`'s PSEL.
-- `RPPG_0` drives the TX pin to the PIC32 and watches the RX pin.
+- `RPPG_0` drives the TX pin to the PIC32 and receives on the RX pin.
+- The push buttons SW1, SW2, and SW3 come in on new top-level ports
+  `SW1_N`, `SW2_N`, and `SW3_N`: pins K1, J2, and L1, LVCMOS15 (bank 5 runs
+  at 1.5 V). The script appends their constraints to the project's copy of
+  `user.pdc`.
 
 There is no frame interrupt. The MSS fabric interrupts and GPIO_0 sit inside
 the `FlashFreeze_SB` System Builder block, and regenerating it needs the FCCC

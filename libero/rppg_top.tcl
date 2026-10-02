@@ -4,7 +4,8 @@
 #   camera pins ──► RPPG_0 ──► line_write_read_0     (re-timed, ROI border)
 #   FIC_0 APB   ──► RPPG_0 at 0x30001000; apb3_if_0 keeps the rest
 #   RPPG_0 UART ──► TX pin (to the PIC32, then USB); CoreUART never sends
-#   RX pin      ──► RPPG_0 too, to tell when the PC is listening
+#   RX pin      ──► RPPG_0 too: commands from the PC, and to tell when it listens
+#   SW1-SW3     ──► RPPG_0 (new pins K1, J2, L1; the reference leaves them unused)
 #
 # No interrupt line: the MSS fabric interrupts and GPIO_0 are inside the
 # FlashFreeze_SB System Builder block, and regenerating it needs FCCC
@@ -18,7 +19,7 @@ proc checked {args} {
 }
 
 set hdl_dir [file join $repo_dir hdl src]
-foreach f {cam_bus.v roi_accumulator.v uart_tx.v rppg_top.v} {
+foreach f {cam_bus.v roi_accumulator.v uart_tx.v uart_rx.v overlay.v rppg_top.v} {
     import_files -hdl_source [file join $hdl_dir $f]
 }
 build_design_hierarchy
@@ -74,7 +75,34 @@ checked sd_mark_pins_unused -sd_name $sd -pin_names {UART_interface_0:TX}
 checked sd_connect_pins -sd_name $sd -pin_names {RPPG_0:uart_tx_o TX}
 checked sd_connect_pins -sd_name $sd -pin_names {RX RPPG_0:uart_rx_i}
 
+# Color constants: from RPPG_0's COLOR_GAIN register instead of the
+# reference GUI's UART receiver, whose values came up wrong after power-up
+# (red gain low: white showed as cyan).
+foreach {lwr rppg} {R_CONST_I red_const_o G_CONST_I green_const_o
+                    B_CONST_I blue_const_o COMMON_CONST_I common_const_o} {
+    checked sd_disconnect_pins -sd_name $sd -pin_names "line_write_read_0:$lwr"
+    checked sd_connect_pins -sd_name $sd -pin_names "RPPG_0:$rppg line_write_read_0:$lwr"
+}
+foreach pin {red_const_o green_const_o blue_const_o common_const_o} {
+    checked sd_mark_pins_unused -sd_name $sd -pin_names "UART_interface_0:$pin"
+}
+
+# Push buttons: active low, pulled up to the 1.5 V bank 5 supply (kit
+# schematic, sheet 6).
+foreach {port pin pkg} {SW1_N sw1_n_i K1 SW2_N sw2_n_i J2 SW3_N sw3_n_i L1} {
+    checked sd_create_scalar_port -sd_name $sd -port_name $port -port_direction {IN}
+    checked sd_connect_pins -sd_name $sd -pin_names "$port RPPG_0:$pin"
+}
+
 save_smartdesign -sd_name $sd
 generate_component -component_name $sd
 build_design_hierarchy
 set_root -module {TOP::work}
+
+# Pin constraints for the buttons, appended to the project's copy of the
+# reference I/O constraints.
+set pdc [open [file join $build_dir constraint io user.pdc] a]
+foreach {port pkg} {SW1_N K1 SW2_N J2 SW3_N L1} {
+    puts $pdc "\nset_io $port -pinname $pkg -fixed yes -iostd LVCMOS15 -DIRECTION INPUT"
+}
+close $pdc

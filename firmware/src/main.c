@@ -2,9 +2,13 @@
 #include "m2sxxx.h"
 #include "system_m2sxxx.h"
 #include "config.h"
+#include "console.h"
 #include "rppg.h"
+#include "uart.h"
+#include "ui.h"
 #include "OV7725.h"
 #include "ili9488.h"
+#include "drivers/mss_i2c/mss_i2c.h"
 
 /* rppg_top registers (word offsets); see hdl/src/rppg_top.v */
 #define REG_SUM_R      0
@@ -14,14 +18,20 @@
 #define REG_FRAME      4
 #define REG_TIMESTAMP  5
 #define REG_GEOMETRY   6
-#define REG_UART       9
-#define UART_BUSY      (1u << 0)
-#define UART_HOST_SEEN (1u << 1)   /* the PC has put the PIC32 in relay mode */
+#define REG_ROI_X      7
+#define REG_ROI_Y      8
+#define REG_BUTTONS    13
+
+#define FRAME_W        640
+#define FRAME_H        480
 
 /* Frames buffered between the SysTick handler and the main loop. An
  * estimate takes a large fraction of a second in soft float, so this must
  * hold more frames than arrive during one estimate. Power of two. */
 #define FRAME_QUEUE 64
+
+/* A button counts as pressed or released once it has held still this long. */
+#define DEBOUNCE_MS 20
 
 typedef struct {
     uint32_t sum_r, sum_g, sum_b, count, frame, timestamp_us;
@@ -36,10 +46,38 @@ static volatile uint32_t q_head, q_tail;
 static volatile uint32_t queue_overflows;
 static uint32_t last_seen_frame;
 
+/* Button presses, one bit per button (SW1 = bit 0), set by the SysTick
+ * handler and cleared by the main loop. */
+static volatile uint32_t button_events;
+
+/* Debounces the three push buttons; called every millisecond. */
+static void poll_buttons(void)
+{
+    static uint32_t stable;
+    static uint8_t  held[3];
+    uint32_t raw = roi[REG_BUTTONS];
+    for (int i = 0; i < 3; i++) {
+        uint32_t bit = 1u << i;
+        if ((raw ^ stable) & bit) {
+            if (++held[i] >= DEBOUNCE_MS) {
+                stable ^= bit;
+                held[i] = 0;
+                if (stable & bit)
+                    button_events |= bit;
+            }
+        } else {
+            held[i] = 0;
+        }
+    }
+}
+
 /* The fabric latches each frame's sums at VSYNC and holds them for a whole
  * frame (33 ms), and there is no fabric interrupt line, so poll at 1 kHz. */
 void SysTick_Handler(void)
 {
+    poll_buttons();
+    console_rx();
+
     uint32_t frame = roi[REG_FRAME];
     if (frame == last_seen_frame)
         return;
@@ -56,6 +94,10 @@ void SysTick_Handler(void)
     f.frame = frame;
     last_seen_frame = frame;
 
+    /* Here rather than in the main loop, which an estimate blocks for a
+     * fifth of a second. */
+    ui_frame(f.sum_g, f.count);
+
     uint32_t h = q_head;
     if (h - q_tail >= FRAME_QUEUE) {
         queue_overflows++;      /* shows up as a frame-counter gap */
@@ -65,51 +107,91 @@ void SysTick_Handler(void)
     q_head = h + 1;
 }
 
-static void uart_putc(char c)
-{
-    while (roi[REG_UART] & UART_BUSY)
-        ;
-    roi[REG_UART] = (uint8_t)c;
-}
+/* Addresses that answer on the camera's I2C bus, for finding the LCD
+ * board's touch controller. Reported in the header line. */
+#define I2C_SCAN_MAX 8
+static uint8_t i2c_found[I2C_SCAN_MAX];
+static int     i2c_found_n;
 
-static void uart_puts(const char *s)
+static void i2c_scan(void)
 {
-    while (*s)
-        uart_putc(*s++);
-}
-
-static void uart_putu(uint32_t v)
-{
-    char buf[10];
-    int n = 0;
-    do {
-        buf[n++] = '0' + v % 10;
-        v /= 10;
-    } while (v);
-    while (n)
-        uart_putc(buf[--n]);
-}
-
-#if ENABLE_DSP
-/* Prints a non-negative float with a fixed number of decimals (at most 6).
- * Saves linking printf's float support. */
-static void uart_putf(float v, int decimals)
-{
-    uint32_t scale = 1;
-    for (int i = 0; i < decimals; i++)
-        scale *= 10;
-    uint32_t fixed = (uint32_t)(v * scale + 0.5f);
-    uart_putu(fixed / scale);
-    if (!decimals)
-        return;
-    uart_putc('.');
-    uint32_t frac = fixed % scale;
-    for (scale /= 10; scale; scale /= 10) {
-        uart_putc('0' + frac / scale);
-        frac %= scale;
+    for (uint8_t a = 0x08; a < 0x78; a++) {
+        uint8_t byte;
+        MSS_I2C_read(&g_mss_i2c0, a, &byte, 1, MSS_I2C_RELEASE_BUS);
+        uint32_t start = DWT->CYCCNT;
+        mss_i2c_status_t st;
+        while ((st = MSS_I2C_get_status(&g_mss_i2c0)) == MSS_I2C_IN_PROGRESS &&
+               DWT->CYCCNT - start < SystemCoreClock / 500)    /* 2 ms */
+            ;
+        if (st == MSS_I2C_SUCCESS && i2c_found_n < I2C_SCAN_MAX)
+            i2c_found[i2c_found_n++] = a;
     }
 }
+
+/* Frames before this one were summed over the previous ROI; the DSP skips
+ * them. */
+static uint32_t roi_valid_from;
+
+/* Set by the console's "restart"; the main loop restarts the estimates at
+ * the next frame and reports it. */
+static int restart_requested;
+
+void app_restart(void)
+{
+    restart_requested = 1;
+}
+
+int app_set_roi(int x0, int y0, int x1, int y1)
+{
+    if (x0 < 0 || y0 < 0 || x1 > FRAME_W || y1 > FRAME_H || x0 >= x1 || y0 >= y1)
+        return -1;
+    roi[REG_ROI_X] = (uint32_t)x1 << 16 | (uint32_t)x0;
+    roi[REG_ROI_Y] = (uint32_t)y1 << 16 | (uint32_t)y0;
+    /* The fabric switches at the next VSYNC, so the frame after the one in
+     * progress is the first with the new ROI. */
+    roi_valid_from = roi[REG_FRAME] + 2;
+#if ENABLE_DSP
+    rppg_init();
+    ui_show_none();
 #endif
+    if (uart_host_seen()) {
+        uart_puts("# roi ");
+        uart_putu(x0); uart_putc(' '); uart_putu(y0); uart_putc(' ');
+        uart_putu(x1); uart_putc(' '); uart_putu(y1);
+        uart_puts("\r\n");
+    }
+    return 0;
+}
+
+/* SW1 steps the ROI through a 3 x 3 grid of positions, starting in the
+ * middle; SW2 steps through three sizes; SW3 toggles the color test
+ * pattern. */
+static void handle_buttons(void)
+{
+    static const int16_t pos[9][2] = {
+        {320, 240}, {160, 120}, {320, 120}, {480, 120}, {480, 240},
+        {480, 360}, {320, 360}, {160, 360}, {160, 240},
+    };
+    static const int16_t size[3][2] = { {160, 120}, {240, 180}, {96, 72} };
+    static int p, s;
+
+    uint32_t ev = button_events;
+    if (!ev)
+        return;
+    button_events &= ~ev;       /* SysTick only sets bits */
+
+    if (ev & 3) {
+        if (ev & 1)
+            p = (p + 1) % 9;
+        if (ev & 2)
+            s = (s + 1) % 3;
+        int w = size[s][0], h = size[s][1];
+        int x0 = pos[p][0] - w / 2, y0 = pos[p][1] - h / 2;
+        app_set_roi(x0, y0, x0 + w, y0 + h);
+    }
+    if (ev & 4)
+        ui_set_test(!ui_test());
+}
 
 int main(void)
 {
@@ -117,57 +199,89 @@ int main(void)
      * locks it. The LCD then switches from its start-up screen to video. */
     OV7725_init();
     ILI9488_init();
+    i2c_scan();
 
+    /* The instruction cache in front of the eNVM is off after reset, and
+     * every fetch then waits for the eNVM. Turn it on after the start-up
+     * delays, which the reference times with busy loops. */
+    uint32_t cc_cr_boot = SYSREG->CC_CR, envm_cr_boot = SYSREG->ENVM_CR;
+    SYSREG->FLUSH_CR = 1u;              /* invalidate whatever the latches hold */
+    SYSREG->CC_CR = cc_cr_boot | 1u;    /* CC_CACHE_ENB */
+
+    ui_init();
     last_seen_frame = roi[REG_FRAME];
     SysTick_Config(SystemCoreClock / 1000);
 
 #if ENABLE_DSP
     rppg_init();
 #endif
-    int host_seen = 0, geometry_sent = 0;
+    int host_seen = 0, header_sent = 0;
 
     for (;;) {
+        handle_buttons();
+        console_poll();
+
         if (q_tail == q_head)
             continue;
         frame_sums_t f = queue[q_tail % FRAME_QUEUE];
         q_tail++;
 
         /* Until the PIC32 relays, a byte sent to it overruns its UART, which
-         * then stops receiving until the board is power-cycled. */
-        if (!host_seen) {
-            if (!(roi[REG_UART] & UART_HOST_SEEN))
-                continue;
+         * then stops receiving until the board is power-cycled. So the
+         * display works from power-on, and the UART waits for the PC. */
+        if (!host_seen && uart_host_seen()) {
             host_seen = 1;
+            restart_requested = 1;
+        }
+
+        if (host_seen) {
+            /* One comment line with the camera geometry, the cache registers
+             * at boot, and the I2C scan, for checking the setup. capture.py
+             * skips lines that don't have six fields. */
+            if (!header_sent) {
+                uint32_t g = roi[REG_GEOMETRY];
+                uart_puts("# lines ");
+                uart_putu(g & 0x3FF);
+                uart_puts(", pixels per line ");
+                uart_putu(g >> 16);
+                uart_puts(", CC_CR at boot ");
+                uart_puthex(cc_cr_boot);
+                uart_puts(", ENVM_CR ");
+                uart_puthex(envm_cr_boot);
+                uart_puts(", I2C");
+                for (int i = 0; i < i2c_found_n; i++) {
+                    uart_putc(' ');
+                    uart_puthex(i2c_found[i]);
+                }
+                uart_puts("\r\n");
+                header_sent = 1;
+            }
+
+            /* Restart the estimates at this frame, so the PC can repeat them
+             * from a recording that starts here (rppg.check_board). */
+            if (restart_requested) {
+                restart_requested = 0;
 #if ENABLE_DSP
-            /* Start the estimates at the first recorded frame, so the PC
-             * can repeat them from the recording (rppg.check_board). */
-            rppg_init();
+                rppg_init();
+                ui_show_none();
 #endif
-        }
+                uart_puts("# restart ");
+                uart_putu(f.frame);
+                uart_puts("\r\n");
+            }
 
-        /* One comment line with the camera geometry, for checking the setup.
-         * capture.py skips lines that don't have six fields. */
-        if (!geometry_sent) {
-            uint32_t g = roi[REG_GEOMETRY];
-            uart_puts("# lines ");
-            uart_putu(g & 0x3FF);
-            uart_puts(", pixels per line ");
-            uart_putu(g >> 16);
+            /* frame,timestamp_us,sum_r,sum_g,sum_b,pixel_count (docs/plan.md) */
+            uart_putu(f.frame);         uart_putc(',');
+            uart_putu(f.timestamp_us);  uart_putc(',');
+            uart_putu(f.sum_r);         uart_putc(',');
+            uart_putu(f.sum_g);         uart_putc(',');
+            uart_putu(f.sum_b);         uart_putc(',');
+            uart_putu(f.count);
             uart_puts("\r\n");
-            geometry_sent = 1;
         }
-
-        /* frame,timestamp_us,sum_r,sum_g,sum_b,pixel_count (docs/plan.md) */
-        uart_putu(f.frame);         uart_putc(',');
-        uart_putu(f.timestamp_us);  uart_putc(',');
-        uart_putu(f.sum_r);         uart_putc(',');
-        uart_putu(f.sum_g);         uart_putc(',');
-        uart_putu(f.sum_b);         uart_putc(',');
-        uart_putu(f.count);
-        uart_puts("\r\n");
 
 #if ENABLE_DSP
-        if (f.count == 0)
+        if (f.count == 0 || (int32_t)(f.frame - roi_valid_from) < 0)
             continue;
         rppg_sample_t s;
         rppg_result_t res;
@@ -182,6 +296,9 @@ int main(void)
         if (rppg_estimate(&res) != 0)
             continue;
         uint32_t us = (DWT->CYCCNT - start) / (SystemCoreClock / 1000000u);
+        ui_show_bpm(res.bpm, res.quality);
+        if (!host_seen)
+            continue;
 
         /* EST <frame> <bpm_raw> <bpm> <quality> <estimate_us>: the format
          * of firmware/test/host_rppg, plus the time the estimate took. */
@@ -192,8 +309,6 @@ int main(void)
         uart_putf(res.quality, 4);  uart_putc(' ');
         uart_putu(us);
         uart_puts("\r\n");
-        /* TODO(Phase 4): ui_show_bpm(res.bpm, res.quality). The estimates
-         * then have to run before the PC connects too. */
 #endif
     }
 }

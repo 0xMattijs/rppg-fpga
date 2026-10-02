@@ -79,10 +79,16 @@ Leave these out of the ROI path:
 3. Replaces the bytes in a 4-pixel border just outside the ROI with green,
    in the LCD copy only. The LCD drops 1 in 4 pixels and 1 in 3 lines, so a
    thinner border could vanish.
+4. Draws the display overlay on top (Phase 4). `overlay.v` decides, for
+   each pixel, whether to keep, darken, or paint it; `cam_bus` applies that
+   to both bytes of the pixel. Darkening halves each RGB565 channel, and the
+   low byte takes G's top bit from the high byte.
 
 A `V_SYNC` rise ends one frame and starts the next: `roi_accumulator`
 latches the sums and clears its accumulators in the same cycle.
-`hdl/sim/tb_rppg_top.v` checks the sums and every byte the LCD path sees.
+`hdl/sim/tb_rppg_top.v` checks the sums and every byte the LCD path sees,
+with the overlay on. `hdl/sim/tb_overlay.v` checks the overlay's layout over
+a whole 640 × 480 frame, plain and mirrored.
 
 ## Measured on the board
 
