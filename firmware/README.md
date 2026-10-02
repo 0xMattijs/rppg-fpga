@@ -86,7 +86,9 @@ these last until the next power cycle.
 
 `preview 1` makes the board send an 80 × 60 thumbnail of the camera (the
 fabric's `thumb.v`), which `python -m rppg.preview` shows; `capture.py`
-turns it off.
+turns it off unless it runs with `--preview`. With the preview on, a
+recording keeps every frame and its estimates still match the PC's
+(`check_board`), and estimates still take 193 ms.
 
 ## Checking the DSP on the board
 

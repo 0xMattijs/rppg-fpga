@@ -62,8 +62,9 @@ pip install -r requirements.txt
 python -m rppg.program program ../libero/build/export/rppg.dat
 
 # Record per-frame sums and the board's BPM estimates (through the same PIC,
-# /dev/ttyACM0); the estimates go to ../data/session.est
-python -m rppg.capture --out ../data/session.csv
+# /dev/ttyACM0); the estimates go to ../data/session.est. --preview shows
+# the camera while recording
+python -m rppg.capture --out ../data/session.csv --preview
 
 # Check the board's estimates against the host build of the same C code
 python -m rppg.check_board ../data/session.csv
@@ -90,4 +91,9 @@ python -m rppg.stress
 # Compare with an Apple Watch: start a Workout on the watch, record with
 # capture.py, then export from the Health app (Phase 5)
 python -m rppg.validate ../data/session.est --watch export.zip --plot session.png
+
+# Or all of that in one go: check the framing, calibrate (C), record (R),
+# then wait for the Health export in ~/Downloads and compare; files go to
+# ../data/talking.*
+python -m rppg.session talking --minutes 5
 ```

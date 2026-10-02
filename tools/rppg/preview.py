@@ -6,15 +6,16 @@
 The firmware sends the thumbnail as IMG lines while the preview is on
 (firmware/include/preview.h). This script turns it on, draws the ROI and the
 latest estimate, and turns it off again when the window closes or on Ctrl+C.
-It needs the serial port to itself, so stop capture.py first.
+It needs the serial port to itself, so stop capture.py first; capture.py
+--preview and session.py show the same window while they record.
 """
 import argparse
 import base64
 import sys
-import time
 
 import numpy as np
-import serial
+
+from .board import LineReader, open_board, send
 
 W, H, SCALE = 80, 60, 8      # thumbnail size; one pixel per 8 x 8 block
 
@@ -23,6 +24,92 @@ def rgb565(raw):
     p = np.frombuffer(raw, dtype=">u2").astype(np.uint32)
     r, g, b = p >> 11 & 31, p >> 5 & 63, p & 31
     return np.stack([r * 255 // 31, g * 255 // 63, b * 255 // 31], -1).astype(np.uint8)
+
+
+class Preview:
+    """The preview window. Pass it every line from the board with feed(),
+    and call pump() often to keep the window responsive."""
+
+    def __init__(self, mirror=True, save=None, title="rPPG camera preview"):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Rectangle
+
+        self.plt = plt
+        self.mirror = mirror
+        self.save = save
+        self.img = np.zeros((H, W, 3), np.uint8)
+        self.rows_seen = set()
+        self.roi = None
+        self.est = ""
+        self.status = ""
+        self.frames = 0
+        self.keys = []
+
+        self.fig, ax = plt.subplots(figsize=(8, 6.4))
+        self.fig.canvas.manager.set_window_title(title)
+        self.shown = ax.imshow(self.img, extent=(0, W * SCALE, H * SCALE, 0),
+                               interpolation="nearest")
+        self.box = Rectangle((0, 0), 0, 0, fill=False, ec="lime", lw=2)
+        ax.add_patch(self.box)
+        ax.set_axis_off()
+        self.title = ax.set_title("waiting for the board...")
+        self.footer = self.fig.text(0.5, 0.02, "", ha="center", fontsize=12)
+        self.fig.canvas.mpl_connect("key_press_event", lambda e: self.keys.append(e.key))
+        self.fig.tight_layout(rect=(0, 0.05, 1, 1))
+        plt.show(block=False)
+        # Don't pull the window to the front on every redraw, so the
+        # terminal keeps the keyboard if the user goes back to it.
+        matplotlib.rcParams["figure.raise_window"] = False
+
+    def alive(self):
+        return self.plt.fignum_exists(self.fig.number)
+
+    def set_status(self, text):
+        if text != self.status:
+            self.status = text
+            self.footer.set_text(text)
+
+    def pop_keys(self):
+        keys, self.keys = self.keys, []
+        return keys
+
+    def feed(self, line):
+        f = line.split()
+        if line.startswith("IMG roi") and len(f) == 6:
+            self.roi = [int(v) for v in f[2:]]
+        elif line.startswith("IMG ") and len(f) == 3 and f[1].isdigit():
+            row = int(f[1])
+            try:
+                data = base64.b64decode(f[2], validate=True)
+            except ValueError:
+                return                # a byte lost on the way
+            if row < H and len(data) == 2 * W:
+                self.img[row] = rgb565(data)
+                self.rows_seen.add(row)
+            if row == H - 1:
+                self.show_image()
+        elif line.startswith("EST ") and len(f) == 6:
+            self.est = f"{float(f[3]):.0f} bpm, quality {float(f[4]):.2f}"
+
+    def show_image(self):
+        self.frames += 1
+        self.shown.set_data(self.img[:, ::-1] if self.mirror else self.img)
+        if self.roi:
+            x0, y0, x1, y1 = self.roi
+            if self.mirror:
+                x0, x1 = W * SCALE - x1, W * SCALE - x0
+            self.box.set_bounds(x0, y0, x1 - x0, y1 - y0)
+        missing = H - len(self.rows_seen)
+        self.title.set_text(f"image {self.frames}"
+                            + (f", {missing} rows missing" if missing else "")
+                            + (f"   {self.est}" if self.est else ""))
+        self.rows_seen.clear()
+        if self.save:
+            self.fig.savefig(self.save)
+
+    def pump(self):
+        self.plt.pause(0.01)
 
 
 def main():
@@ -34,74 +121,21 @@ def main():
     p.add_argument("--save", help="write each complete image to this file")
     args = p.parse_args()
 
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Rectangle
-
-    img = np.zeros((H, W, 3), np.uint8)
-    rows_seen = set()
-    roi = None
-    est = ""
-
-    fig, ax = plt.subplots(figsize=(8, 6.4))
-    fig.canvas.manager.set_window_title("rPPG camera preview")
-    shown = ax.imshow(img, extent=(0, W * SCALE, H * SCALE, 0), interpolation="nearest")
-    box = Rectangle((0, 0), 0, 0, fill=False, ec="lime", lw=2)
-    ax.add_patch(box)
-    ax.set_axis_off()
-    title = ax.set_title("waiting for the board...")
-    fig.tight_layout()
-    plt.show(block=False)
-
-    with serial.Serial(args.port, args.baud, timeout=0.02) as ser:
-        ser.write(b"&")           # PIC32: relay mode; ignored if already in it
-        time.sleep(0.1)
-        ser.write(b"\npreview 1\n")
-        buf = b""
-        frames = 0
+    win = Preview(mirror=not args.no_mirror, save=args.save)
+    with open_board(args.port, args.baud) as ser:
+        send(ser, "preview 1")
+        reader = LineReader(ser)
         try:
-            while plt.fignum_exists(fig.number):
-                buf += ser.read(4096)
-                *lines, buf = buf.split(b"\n")
-                for raw in lines:
-                    line = raw.decode("ascii", "replace").strip().lstrip("&")
-                    f = line.split()
-                    if line.startswith("IMG roi") and len(f) == 6:
-                        roi = [int(v) for v in f[2:]]
-                    elif line.startswith("IMG ") and len(f) == 3 and f[1].isdigit():
-                        row = int(f[1])
-                        try:
-                            data = base64.b64decode(f[2], validate=True)
-                        except ValueError:
-                            continue      # a byte lost on the way
-                        if row < H and len(data) == 2 * W:
-                            img[row] = rgb565(data)
-                            rows_seen.add(row)
-                        if row == H - 1:
-                            frames += 1
-                            show = img if args.no_mirror else img[:, ::-1]
-                            shown.set_data(show)
-                            if roi:
-                                x0, y0, x1, y1 = roi
-                                if not args.no_mirror:
-                                    x0, x1 = W * SCALE - x1, W * SCALE - x0
-                                box.set_bounds(x0, y0, x1 - x0, y1 - y0)
-                            missing = H - len(rows_seen)
-                            title.set_text(f"image {frames}"
-                                           + (f", {missing} rows missing" if missing else "")
-                                           + (f"   {est}" if est else ""))
-                            rows_seen.clear()
-                            if args.save:
-                                fig.savefig(args.save)
-                    elif line.startswith("EST ") and len(f) == 6:
-                        est = f"{float(f[3]):.0f} bpm, quality {float(f[4]):.2f}"
-                    elif line.startswith("# error"):
+            while win.alive():
+                for line in reader.lines():
+                    win.feed(line)
+                    if line.startswith("# error"):
                         print(line, file=sys.stderr)
-                plt.pause(0.01)
+                win.pump()
         except KeyboardInterrupt:
             pass
         finally:
-            ser.write(b"\npreview 0\n")
-            time.sleep(0.1)
+            send(ser, "preview 0")
 
 
 if __name__ == "__main__":
