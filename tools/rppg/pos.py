@@ -3,18 +3,44 @@
 Reference implementation for firmware/src/dsp/rppg.c.
 """
 import argparse
+import sys
 
 import numpy as np
 from scipy.signal import butter, filtfilt
 
 HR_BAND = (0.7, 4.0)
+MAX_GAP_FILL = 5        # frames; a longer gap restarts the window
+HARMONIC_RATIO = 0.25     # see HARMONIC_RATIO in firmware/include/config.h
 
 
 def load(path):
+    """Return (frame, rgb): frame counters and (N, 3) mean RGB. Frames with no
+    pixels are left out, as the firmware does."""
     d = np.genfromtxt(path, delimiter=",", names=True)
-    n = np.maximum(d["pixel_count"], 1)
+    d = d[d["pixel_count"] > 0]
+    n = d["pixel_count"]
     rgb = np.stack([d["sum_r"] / n, d["sum_g"] / n, d["sum_b"] / n], axis=1)
-    return rgb
+    return d["frame"].astype(np.int64), rgb
+
+
+def fill_gaps(frame, rgb, max_fill=MAX_GAP_FILL):
+    """Fill frame-counter gaps of up to max_fill frames by linear interpolation.
+
+    Yields (frame, samples, restart) once per input frame: `samples` is the
+    list it contributes, interpolated ones first, and `restart` is True after
+    a longer gap. Mirrors rppg_push() in the firmware.
+    """
+    last_f, last_x = None, None
+    for f, x in zip(frame, rgb):
+        filled, restart = [], False
+        if last_f is not None:
+            gap = (int(f) - int(last_f) - 1) % 2 ** 32
+            if gap > max_fill:
+                restart = True
+            else:
+                filled = [last_x + (k / (gap + 1)) * (x - last_x) for k in range(1, gap + 1)]
+        yield f, filled + [x], restart
+        last_f, last_x = f, x
 
 
 def pos(rgb, fs, win_s=1.6):
@@ -40,12 +66,20 @@ def bandpass(x, fs, band=HR_BAND, order=3):
     return filtfilt(b, a, x)
 
 
-def estimate_bpm(x, fs, nfft=512, band=HR_BAND):
+def estimate_bpm(x, fs, nfft=512, band=HR_BAND, harmonic_ratio=HARMONIC_RATIO):
     nfft = max(nfft, len(x))
     spec = np.abs(np.fft.rfft(x * np.hanning(len(x)), n=nfft)) ** 2
     f = np.fft.rfftfreq(nfft, 1 / fs)
     idx = np.flatnonzero((f >= band[0]) & (f <= band[1]))
     k = idx[np.argmax(spec[idx])]
+
+    # A pulse with a strong second harmonic can peak at twice the heart rate.
+    # If there is a peak near half the frequency with enough power, take it.
+    half = np.arange(max(k // 2 - 1, idx[0]), (k + 1) // 2 + 2)
+    if len(half):
+        kh = half[np.argmax(spec[half])]
+        if spec[kh] >= harmonic_ratio * spec[k]:
+            k = kh
     quality = spec[k] / spec[idx].sum()
 
     # Parabolic interpolation on power across the peak bin and its neighbors.
@@ -55,18 +89,38 @@ def estimate_bpm(x, fs, nfft=512, band=HR_BAND):
     return (k + delta) * fs / nfft * 60, quality, f, spec
 
 
-def track(rgb, fs, n=300, step=30, alpha=0.3, nfft=512):
-    """Estimate every `step` frames over the last `n` frames, as the firmware does.
+def windows(frame, rgb, n=300, step=30, max_fill=MAX_GAP_FILL):
+    """Yield (frame, window) whenever the firmware would estimate: the window
+    holds `n` samples and `step` have arrived since the last estimate.
+    Gaps are filled or restart the window as in fill_gaps."""
+    buf, pending = [], 0
+    for f, samples, restart in fill_gaps(frame, rgb, max_fill):
+        if restart:
+            buf, pending = [], 0
+            yield None, None            # tells track() to reset its smoothing
+        buf = (buf + samples)[-n:]
+        pending += len(samples)
+        if len(buf) == n and pending >= step:
+            pending = 0
+            yield f, np.array(buf)
+
+
+def track(frame, rgb, fs, n=300, step=30, alpha=0.3, nfft=512, max_fill=MAX_GAP_FILL,
+          harmonic_ratio=HARMONIC_RATIO):
+    """Estimate BPM over time, as the firmware does.
 
     Returns rows of (frame, raw_bpm, smoothed_bpm, quality). Smoothing is an
-    exponential moving average seeded with the first estimate.
+    exponential moving average seeded with the first estimate after a restart.
     """
     rows, smooth = [], None
-    for end in range(n, len(rgb) + 1, step):
-        pulse = bandpass(pos(rgb[end - n:end], fs), fs)
-        bpm, q, _, _ = estimate_bpm(pulse, fs, nfft)
+    for f, w in windows(frame, rgb, n, step, max_fill):
+        if w is None:
+            smooth = None
+            continue
+        pulse = bandpass(pos(w, fs), fs)
+        bpm, q, _, _ = estimate_bpm(pulse, fs, nfft, harmonic_ratio=harmonic_ratio)
         smooth = bpm if smooth is None else smooth + alpha * (bpm - smooth)
-        rows.append((end - 1, bpm, smooth, q))
+        rows.append((f, bpm, smooth, q))
     return rows
 
 
@@ -77,7 +131,11 @@ def main():
     p.add_argument("--plot", action="store_true")
     args = p.parse_args()
 
-    rgb = load(args.csv)
+    frame, rgb = load(args.csv)
+    parts = list(fill_gaps(frame, rgb))
+    if any(restart for _, _, restart in parts):
+        print(f"warning: gaps over {MAX_GAP_FILL} frames; result spans them", file=sys.stderr)
+    rgb = np.array([x for _, samples, _ in parts for x in samples])
     pulse = bandpass(pos(rgb, args.fs), args.fs)
     bpm, q, f, spec = estimate_bpm(pulse, args.fs)
     print(f"BPM {bpm:.1f}  quality {q:.2f}")

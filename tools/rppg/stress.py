@@ -18,7 +18,7 @@ import argparse
 import numpy as np
 
 from . import pos, synth
-from .check_firmware import config
+from .check_firmware import config, track
 
 SCALES = (1, 3, 10)
 TARGET_MAE = 5.0
@@ -45,10 +45,11 @@ def score(effects, bpms, seeds, seconds, cfg):
     err = []
     for bpm in bpms:
         for seed in range(seeds):
-            _, _, rgb, true = synth.generate(bpm, seconds, cfg["fs"], seed, **effects)
-            for end, _, shown, _ in pos.track(rgb, cfg["fs"], cfg["n"], cfg["step"],
-                                              cfg["alpha"], cfg["nfft"]):
-                err.append(shown - true[end + 1 - cfg["n"]:end + 1].mean())
+            frame, _, rgb, true = synth.generate(bpm, seconds, cfg["fs"], seed, **effects)
+            for f, _, shown, _ in track(frame, rgb, cfg):
+                # True rate over the window: the last n frame-counter values.
+                in_win = (frame > f - cfg["n"]) & (frame <= f)
+                err.append(shown - true[in_win].mean())
     err = np.abs(err)
     return err.mean(), err.max()
 

@@ -34,7 +34,8 @@ def config():
         sys.exit(f"HR band differs: config.h {config_band(defs)}, pos.py {pos.HR_BAND}")
     return dict(fs=float(defs["FRAME_RATE_HZ"]), n=int(defs["WINDOW_SAMPLES"]),
                 nfft=int(defs["FFT_SIZE"]), step=int(defs["ESTIMATE_EVERY"]),
-                alpha=float(defs["BPM_SMOOTH_ALPHA"]))
+                alpha=float(defs["BPM_SMOOTH_ALPHA"]), max_fill=int(defs["MAX_GAP_FILL"]),
+                harmonic_ratio=float(defs["HARMONIC_RATIO"]))
 
 
 def run_c(csv):
@@ -45,18 +46,39 @@ def run_c(csv):
     return np.array(rows), pulse
 
 
+def track(frame, rgb, cfg):
+    return pos.track(frame, rgb, cfg["fs"], cfg["n"], cfg["step"], cfg["alpha"], cfg["nfft"],
+                     cfg["max_fill"], cfg["harmonic_ratio"])
+
+
 def run_py(csv, cfg):
-    rgb = pos.load(csv)
-    rows = pos.track(rgb, cfg["fs"], cfg["n"], cfg["step"], cfg["alpha"], cfg["nfft"])
-    last = rows[-1][0] + 1
-    pulse = pos.bandpass(pos.pos(rgb[last - cfg["n"]:last], cfg["fs"]), cfg["fs"])
+    frame, rgb = pos.load(csv)
+    rows = track(frame, rgb, cfg)
+    *_, (_, last) = (w for w in pos.windows(frame, rgb, cfg["n"], cfg["step"], cfg["max_fill"])
+                     if w[1] is not None)
+    pulse = pos.bandpass(pos.pos(last, cfg["fs"]), cfg["fs"])
     return np.array(rows), pulse
 
 
-def synth(path, bpm, seconds, fs):
+def synth(path, bpm, seconds, fs, extra=()):
     subprocess.run([sys.executable, "-m", "rppg.synth", str(path), "--bpm", str(bpm),
-                    "--seconds", str(seconds), "--fs", str(fs)],
+                    "--seconds", str(seconds), "--fs", str(fs), *extra],
                    check=True, cwd=ROOT / "tools")
+
+
+def cut(path, start, length):
+    """Delete `length` frames from a session CSV, leaving one long gap."""
+    lines = Path(path).read_text().splitlines(keepends=True)
+    del lines[1 + start:1 + start + length]
+    Path(path).write_text("".join(lines))
+
+
+# Sessions that exercise gap filling, restarts, and the harmonic check:
+# name -> (bpm, synth options, frames to cut as (start, length) or None).
+EXTRA_CASES = {"drop_5pct": (72, ["--drop", "0.05"], None),
+               "gap_restart": (90, [], (600, 30)),
+               "harmonic": (60, ["--harmonics", "1.2"], None),
+               "realistic": (84, ["--realistic"], None)}
 
 
 def main():
@@ -73,6 +95,11 @@ def main():
             for bpm in (45, 60, 72, 84, 100, 130, 180, 230):
                 cases.append((Path(tmp) / f"synth_{bpm}.csv", bpm))
                 synth(cases[-1][0], bpm, 30, cfg["fs"])
+            for name, (bpm, extra, gap) in EXTRA_CASES.items():
+                cases.append((Path(tmp) / f"{name}.csv", bpm))
+                synth(cases[-1][0], bpm, 60, cfg["fs"], extra)
+                if gap:
+                    cut(cases[-1][0], *gap)
 
         failed = 0
         print(f"{'session':<16} {'est':>3} {'C bpm':>7} {'py bpm':>7} {'max diff':>9} "

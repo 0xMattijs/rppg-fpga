@@ -27,7 +27,7 @@ static volatile uint32_t q_head, q_tail;
 static volatile uint32_t queue_overflows;
 
 /* Frames lost before they reached rppg_push(), from gaps in the fabric
- * frame counter. Nonzero means the BPM time base is off. */
+ * frame counter. rppg_push() fills short gaps; this counts them for the log. */
 static uint32_t frames_dropped;
 
 /* TODO(Phase 2): attach to the fabric interrupt line Libero assigns.
@@ -52,7 +52,6 @@ int main(void)
 {
     rppg_sample_t s;
     rppg_result_t res;
-    int since_estimate = 0;
     int have_frame = 0;
     uint32_t last_frame = 0;
 
@@ -78,12 +77,7 @@ int main(void)
         s.r = (float)f.sum_r / f.count;
         s.g = (float)f.sum_g / f.count;
         s.b = (float)f.sum_b / f.count;
-        rppg_push(&s);
-
-        if (++since_estimate < ESTIMATE_EVERY)
-            continue;
-        since_estimate = 0;
-        if (rppg_estimate(&res) == 0) {
+        if (rppg_push(&s) && rppg_estimate(&res) == 0) {
             /* TODO(Phase 4): ui_show_bpm(res.bpm, res.quality); */
         }
     }

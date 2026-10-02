@@ -3,8 +3,8 @@
  *
  *   host_rppg session.csv [--pulse]
  *
- * Prints one "EST <frame> <bpm_raw> <bpm> <quality>" line per estimate (every
- * ESTIMATE_EVERY frames once the window is full). With --pulse it then prints
+ * Prints one "EST <frame> <bpm_raw> <bpm> <quality>" line per estimate, when
+ * rppg_push() says one is due. <frame> is the frame counter of the last sample. With --pulse it then prints
  * the band-passed pulse of the last estimate, one sample per line.
  */
 #include <stdio.h>
@@ -31,21 +31,17 @@ int main(int argc, char **argv)
     rppg_init();
     unsigned long frame, ts;
     double r, g, b, n;
-    int pushed = 0, estimates = 0;
+    int estimates = 0;
     while (fgets(line, sizeof line, f)) {
         if (sscanf(line, "%lu,%lu,%lf,%lf,%lf,%lf", &frame, &ts, &r, &g, &b, &n) != 6)
             continue;
-        if (n < 1)
-            n = 1;
+        if (n < 1)              /* main.c skips frames with no pixels */
+            continue;
         rppg_sample_t s = { (uint32_t)frame, (uint32_t)ts,
                             (float)(r / n), (float)(g / n), (float)(b / n) };
-        rppg_push(&s);
-        pushed++;
-
         rppg_result_t res;
-        if (pushed >= WINDOW_SAMPLES && (pushed - WINDOW_SAMPLES) % ESTIMATE_EVERY == 0
-                && rppg_estimate(&res) == 0) {
-            printf("EST %d %.4f %.4f %.6f\n", pushed - 1, res.bpm_raw, res.bpm, res.quality);
+        if (rppg_push(&s) && rppg_estimate(&res) == 0) {
+            printf("EST %lu %.4f %.4f %.6f\n", frame, res.bpm_raw, res.bpm, res.quality);
             estimates++;
         }
     }

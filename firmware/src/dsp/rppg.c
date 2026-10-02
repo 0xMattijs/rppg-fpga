@@ -2,7 +2,8 @@
  *
  * rppg_estimate() runs the whole chain over the last WINDOW_SAMPLES frames:
  * POS with overlap-add, zero-phase band-pass (scipy filtfilt), Hann window,
- * FFT, the strongest in-band peak with parabolic interpolation, and an
+ * FFT, the strongest in-band peak (or half its frequency, if the peak is the
+ * second harmonic) with parabolic interpolation, and an
  * exponential moving average across estimates (pos.track). tools/rppg/check_firmware.py builds
  * this file on the PC and compares it against pos.py.
  */
@@ -29,7 +30,8 @@
 #endif
 
 static rppg_sample_t window[WINDOW_SAMPLES];
-static int head, filled;
+static rppg_sample_t last;   /* most recent sample, for gap filling */
+static int head, filled, pending;
 static float bpm_smooth;     /* < 0 until the first estimate */
 
 /* Work buffers, static so the stack stays small. */
@@ -39,23 +41,59 @@ static double padded[WINDOW_SAMPLES + 2 * BP_PAD];
 static float re[FFT_SIZE], im[FFT_SIZE];
 static float cos_tab[FFT_SIZE / 2], sin_tab[FFT_SIZE / 2];
 
-void rppg_init(void)
+static void restart(void)
 {
     head = 0;
     filled = 0;
+    pending = 0;
     bpm_smooth = -1.0f;
+}
+
+void rppg_init(void)
+{
+    restart();
     for (int k = 0; k < FFT_SIZE / 2; k++) {
         cos_tab[k] = cosf(2.0f * PI_F * k / FFT_SIZE);
         sin_tab[k] = sinf(2.0f * PI_F * k / FFT_SIZE);
     }
 }
 
-void rppg_push(const rppg_sample_t *s)
+static void store(const rppg_sample_t *s)
 {
     window[head] = *s;
     head = (head + 1) % WINDOW_SAMPLES;
     if (filled < WINDOW_SAMPLES)
         filled++;
+    pending++;
+}
+
+int rppg_push(const rppg_sample_t *s)
+{
+    if (filled > 0) {
+        /* Unsigned, so a counter that goes backward counts as a long gap. */
+        uint32_t gap = s->frame - last.frame - 1;
+        if (gap > MAX_GAP_FILL) {
+            restart();
+        } else {
+            /* Lost frames would shorten the time base and raise the BPM. */
+            for (uint32_t k = 1; k <= gap; k++) {
+                float w = (float)k / (gap + 1);
+                rppg_sample_t f = last;
+                f.frame = last.frame + k;
+                f.r += w * (s->r - last.r);
+                f.g += w * (s->g - last.g);
+                f.b += w * (s->b - last.b);
+                store(&f);
+            }
+        }
+    }
+    store(s);
+    last = *s;
+
+    if (filled < WINDOW_SAMPLES || pending < ESTIMATE_EVERY)
+        return 0;
+    pending = 0;
+    return 1;
 }
 
 /* POS (Wang et al., 2017): project each temporally normalized POS_WINDOW
@@ -214,6 +252,26 @@ int rppg_estimate(rppg_result_t *out)
     }
     if (total <= 0)
         return -1;
+
+    /* A pulse with a strong second harmonic can peak at twice the heart
+     * rate. If there is a peak near half the frequency with enough power,
+     * take that one. */
+    int lo = kbest / 2 - 1, hi = (kbest + 1) / 2 + 1;
+    if (lo < kmin)
+        lo = kmin;
+    int khalf = -1;
+    float phalf = 0;
+    for (int k = lo; k <= hi; k++) {
+        float p = re[k] * re[k] + im[k] * im[k];
+        if (p > phalf) {
+            phalf = p;
+            khalf = k;
+        }
+    }
+    if (khalf >= 0 && phalf >= HARMONIC_RATIO * pbest) {
+        kbest = khalf;
+        pbest = phalf;
+    }
 
     /* Parabolic interpolation on power. kmin >= 1 and kmax < FFT_SIZE / 2,
      * so both neighbors exist. */
