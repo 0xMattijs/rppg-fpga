@@ -47,6 +47,9 @@ cd tools
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
+# Program the board through its on-board PIC (no FlashPro needed)
+python -m rppg.program program ../libero/build/export/rppg_ref.dat
+
 # Record per-frame sums from the board
 python -m rppg.capture --port /dev/ttyUSB0 --out ../data/session.csv
 
