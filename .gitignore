@@ -27,3 +27,6 @@ tb
 
 # Host test build
 firmware/test/host_rppg
+
+# Firmware build output
+firmware/build/

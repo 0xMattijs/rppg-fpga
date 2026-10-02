@@ -17,8 +17,13 @@ as `HF10_OV7725_LCD_FF.7z`. Unpack it outside this repository.
 
 ```bash
 source ~/Microchip/setup-microchip-tools.sh
-libero SCRIPT:libero/build.tcl "SCRIPT_ARGS:$HOME/projects/hello-fpga-ref/HF10_OV7725_LCD_FF"
+make -C firmware -f reference.mk
+libero SCRIPT:libero/build.tcl "SCRIPT_ARGS:$HOME/projects/hello-fpga-ref/HF10_OV7725_LCD_FF $PWD/firmware/build/reference.hex"
 ```
+
+`firmware/reference.mk` builds Microchip's demo firmware with this repo's
+camera driver (`firmware/src/drivers/ov7725.c`). Pass `-` instead of the
+`.hex` path to keep Microchip's original firmware image.
 
 The script copies the reference project to `libero/build/`, converts it to the
 installed Libero version, runs synthesis, place-and-route, and timing, and

@@ -1,10 +1,12 @@
 # Rebuild the Hello FPGA video reference design and export programming files.
 #
 # Usage (after sourcing ~/Microchip/setup-microchip-tools.sh):
-#   libero SCRIPT:libero/build.tcl "SCRIPT_ARGS:<ref_project_dir> [<build_dir>]"
+#   libero SCRIPT:libero/build.tcl "SCRIPT_ARGS:<ref_project_dir> [<firmware_hex> [<build_dir>]]"
 #
 # <ref_project_dir>  Unpacked HF10_OV7725_LCD_FF project (Libero v12.7). It is
 #                    copied, never modified.
+# <firmware_hex>     Cortex-M3 image for eNVM, such as firmware/build/reference.hex.
+#                    Default, or "-": keep the eNVM data stored in the project.
 # <build_dir>        Where the converted project goes. Default: libero/build,
 #                    which Git ignores. Wiped and recreated on every run.
 #
@@ -14,11 +16,18 @@
 set script_dir [file dirname [file normalize [info script]]]
 
 if {$argc < 1} {
-    error "usage: libero SCRIPT:build.tcl \"SCRIPT_ARGS:<ref_project_dir> \[<build_dir>\]\""
+    error "usage: libero SCRIPT:build.tcl \"SCRIPT_ARGS:<ref_project_dir> \[<firmware_hex> \[<build_dir>\]\]\""
 }
 set ref_dir [file normalize [lindex $argv 0]]
-if {$argc >= 2} {
-    set build_dir [file normalize [lindex $argv 1]]
+set firmware_hex -
+if {$argc >= 2 && [lindex $argv 1] ne "-"} {
+    set firmware_hex [file normalize [lindex $argv 1]]
+    if {![file exists $firmware_hex]} {
+        error "no firmware image at $firmware_hex"
+    }
+}
+if {$argc >= 3} {
+    set build_dir [file normalize [lindex $argv 2]]
 } else {
     set build_dir [file join $script_dir build]
 }
@@ -53,9 +62,29 @@ run_tool -name {PLACEROUTE}
 run_tool -name {VERIFYTIMING}
 run_tool -name {GENERATEPROGRAMMINGDATA}
 
-# The eNVM client reads its firmware from a Windows path
-# (SC\hellofpga_lcd_cam_ff\Release\hellofpga_lcd_cam_ff.hex). Libero reuses the
-# stored eNVM data, so this works until the firmware changes.
+# The project's eNVM client "hex" points at a Windows path
+# (SC\hellofpga_lcd_cam_ff\Release\hellofpga_lcd_cam_ff.hex), so without a
+# firmware image Libero keeps the eNVM data stored in the project.
+if {$firmware_hex ne "-"} {
+    # The client size is in bytes (8-bit words): count the Intel HEX data bytes.
+    set n_bytes 0
+    set f [open $firmware_hex r]
+    while {[gets $f line] >= 0} {
+        if {[string range $line 7 8] eq "00"} {
+            incr n_bytes [scan [string range $line 1 2] %x]
+        }
+    }
+    close $f
+    set cfg [file join $build_dir update_envm.cfg]
+    set f [open $cfg w]
+    puts $f "nvm_update_storage_client -client_name {hex} -number_of_words $n_bytes \\"
+    puts $f "    -content_type {MEMORY_FILE} -memory_file_format {INTELHEX} \\"
+    puts $f "    -memory_file {$firmware_hex} -base_address 0 -reprogram 1 -use_as_rom 0"
+    close $f
+    run_tool -name {UPDATE_ENVM} -script $cfg
+    puts "build.tcl: eNVM client hex <- $firmware_hex ($n_bytes bytes)"
+}
+
 configure_tool -name {GENERATEPROGRAMMINGFILE} \
     -params {program_fabric:true} \
     -params {program_security:false} \
