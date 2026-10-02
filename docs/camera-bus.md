@@ -1,7 +1,7 @@
 # Camera pixel bus
 
 How the Hello FPGA reference design (`HF10_OV7725_LCD_FF`) receives video
-from the OV7725, and what the Phase 2 adapter for `roi_accumulator` must do.
+from the OV7725, and how `hdl/src/cam_bus.v` adapts it for `roi_accumulator`.
 Sources: `hdl/Write_LSRAM.vhd`, `hdl/double_flop.vhd`,
 `component/work/TOP/TOP.v`, `component/work/line_write_read/line_write_read.v`,
 `constraint/*.sdc`, and `SC/hellofpga_lcd_cam_ff/ov7725.c` in the reference
@@ -32,8 +32,9 @@ a crystal. Measure the real frame rate against the PC clock before trusting
 | `XCLK` | 1 | n/a | Output | 24 MHz to the camera |
 | `CAM_PWDN_O` | 1 | High | Output | Camera power-down, from `FF_GENERATOR` (Flash*Freeze) |
 
-`V_SYNC_I` goes straight into `WRITE_LSRAM` without a synchronizer. The
-adapter must add two flops for it.
+In the reference design, `V_SYNC_I` goes straight into `WRITE_LSRAM`
+without a synchronizer. `cam_bus` now sits in front of `line_write_read` and
+synchronizes it.
 
 ## Pixel format
 
@@ -65,30 +66,31 @@ Leave these out of the ROI path:
   counts 0 and 1 of every 3 (2 of 3 lines).
 - `Image_Enhancement` applies brightness and color constants from the GUI.
 
-Tap the bus after `double_flop` and before `WRITE_LSRAM` to get every pixel
-of the 640 × 480 frame, unchanged.
+## The adapter: `cam_bus`
 
-## Adapter for `roi_accumulator`
+`cam_bus` takes the camera pins and does three things on `GL0`:
 
-`roi_accumulator` expects `frame_start`, `frame_end`, `pix_valid`, `pix_x`,
-`pix_y`, and 8-bit `pix_r/g/b`. Build them on `GL0`:
+1. Passes all four signals on to `line_write_read`, three flops later. Each
+   signal gets the same delay, so the LCD path samples at the same phase as
+   before.
+2. Samples each byte at `WRITE_LSRAM`'s phase, counts bytes from the `H_REF`
+   rising edge and lines from `V_SYNC`, and emits one pixel per two bytes,
+   with each channel padded to 8 bits.
+3. Replaces the bytes in a 4-pixel border just outside the ROI with green,
+   in the LCD copy only. The LCD drops 1 in 4 pixels and 1 in 3 lines, so a
+   thinner border could vanish.
 
-1. Synchronize `V_SYNC_I` with two flops.
-2. `frame_start`: rising edge of synchronized `V_SYNC`.
-   `frame_end`: falling edge of `H_REF` on line 479, or the next
-   `V_SYNC` rise.
-3. Count bytes from each `H_REF` rising edge. Every second byte completes a
-   pixel: assert `pix_valid` for one cycle, and increment `pix_x`.
-4. Reset `pix_x` at each `H_REF` rising edge. Increment `pix_y` at each
-   `H_REF` falling edge, and reset it at `frame_start`.
-5. Expand channels with `CW = 8` by zero padding, as above, or set `CW` to
-   6 and pass the raw values. Either works for POS, which normalizes each
-   channel.
+A `V_SYNC` rise ends one frame and starts the next: `roi_accumulator`
+latches the sums and clears its accumulators in the same cycle.
+`hdl/sim/tb_rppg_top.v` checks the sums and every byte the LCD path sees.
 
-## Open checks on hardware
+## Measured on the board
 
-- Measure the frame rate and line count. Expect 30 fps and 480 lines, but
-  `CLKRC`, `COM4`, and the RC oscillator all affect the frame rate.
-- `COM3 = 0x90` flips the image vertically (bit 7). Bit 4's effect on byte
-  order is unconfirmed. The LCD colors look right, which suggests the order
-  above is correct.
+- 480 lines of 640 pixels, from the `GEOMETRY` register.
+- 30.01 fps by the fabric's microsecond counter, with no dropped frames in
+  65 s. The counter runs from the same RC oscillator as the camera clock, so
+  check the rate against the PC clock before trusting it to better than a
+  percent.
+- Byte order: the LCD colors look right, and a skin-toned ROI averages
+  R 109, G 97, B 90, so `{byte0, byte1}` is R5 G6 B5 as above.
+  `COM3 = 0x90` flips the image vertically (bit 7).

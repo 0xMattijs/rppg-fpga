@@ -1,4 +1,5 @@
-# Rebuild the Hello FPGA video reference design and export programming files.
+# Build the Hello FPGA video reference design with this repo's fabric block
+# (hdl/src/rppg_top.v, added by rppg_top.tcl) and export programming files.
 #
 # Usage (after sourcing ~/Microchip/setup-microchip-tools.sh):
 #   libero SCRIPT:libero/build.tcl "SCRIPT_ARGS:<ref_project_dir> [<firmware_hex> [<build_dir>]]"
@@ -10,10 +11,11 @@
 # <build_dir>        Where the converted project goes. Default: libero/build,
 #                    which Git ignores. Wiped and recreated on every run.
 #
-# Output: <build_dir>/export/rppg_ref.dat (DirectC, for the Hello FPGA GUI)
-# and rppg_ref.stp (STAPL, for FlashPro). Both program fabric and eNVM.
+# Output: <build_dir>/export/rppg.dat (DirectC, for tools/rppg/program.py)
+# and rppg.stp (STAPL, for FlashPro). Both program fabric and eNVM.
 
 set script_dir [file dirname [file normalize [info script]]]
+set repo_dir [file dirname $script_dir]
 
 if {$argc < 1} {
     error "usage: libero SCRIPT:build.tcl \"SCRIPT_ARGS:<ref_project_dir> \[<firmware_hex> \[<build_dir>\]\]\""
@@ -57,6 +59,8 @@ open_project -file [file join $build_dir $prjx_name] \
     -do_backup_on_convert 1 \
     -backup_file [file join $build_dir convert_backup.zip]
 
+source [file join $script_dir rppg_top.tcl]
+
 run_tool -name {SYNTHESIZE}
 run_tool -name {PLACEROUTE}
 run_tool -name {VERIFYTIMING}
@@ -98,7 +102,7 @@ configure_tool -name {GENERATEPROGRAMMINGFILE} \
     -params {program_envm:true}
 run_tool -name {GENERATEPROGRAMMINGFILE}
 
-export_bitstream_file -file_name {rppg_ref} -export_dir $export_dir \
+export_bitstream_file -file_name {rppg} -export_dir $export_dir \
     -format {DAT STP} \
     -trusted_facility_file 1 \
     -trusted_facility_file_components {FABRIC ENVM}

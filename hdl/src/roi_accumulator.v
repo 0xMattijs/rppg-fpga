@@ -1,8 +1,6 @@
 // ROI accumulator (Phase 2).
 // Sums R, G and B for pixels inside a rectangle and latches the totals at
-// frame end. The Cortex-M3 reads the latched values over APB.
-//
-// TODO: match the pixel bus to the reference design's camera capture block.
+// frame end. cam_bus.v feeds it; rppg_top.v puts the results on APB.
 module roi_accumulator #(
     parameter CW = 8,   // bits per color channel, after expansion from RGB565
     parameter XW = 11,

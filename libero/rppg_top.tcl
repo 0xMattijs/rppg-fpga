@@ -1,0 +1,80 @@
+# Add hdl/src/rppg_top.v to the reference design. Sourced by build.tcl with
+# the converted project open; expects $repo_dir.
+#
+#   camera pins ──► RPPG_0 ──► line_write_read_0     (re-timed, ROI border)
+#   FIC_0 APB   ──► RPPG_0 at 0x30001000; apb3_if_0 keeps the rest
+#   RPPG_0 UART ──► TX pin (to the PIC32, then USB); CoreUART never sends
+#   RX pin      ──► RPPG_0 too, to tell when the PC is listening
+#
+# No interrupt line: the MSS fabric interrupts and GPIO_0 are inside the
+# FlashFreeze_SB System Builder block, and regenerating it needs FCCC
+# 2.0.201, which Libero 2026.1's vault lacks. Firmware polls instead.
+
+# Libero's errors don't say which pin a SmartDesign command choked on.
+proc checked {args} {
+    if {[catch {uplevel 1 $args} msg]} {
+        error "rppg_top.tcl: failed: $args\n$msg"
+    }
+}
+
+set hdl_dir [file join $repo_dir hdl src]
+foreach f {cam_bus.v roi_accumulator.v uart_tx.v rppg_top.v} {
+    import_files -hdl_source [file join $hdl_dir $f]
+}
+build_design_hierarchy
+
+set sd TOP
+open_smartdesign -sd_name $sd
+checked sd_instantiate_hdl_module -sd_name $sd -hdl_module_name {rppg_top} \
+    -hdl_file {hdl/rppg_top.v} -instance_name {RPPG_0}
+
+checked sd_connect_pins -sd_name $sd -pin_names {FlashFreeze_SB_0:GL0 RPPG_0:clk}
+checked sd_connect_pins -sd_name $sd -pin_names {MX2_0:Y RPPG_0:rst_n}
+
+# Camera: pins -> RPPG_0 -> line_write_read_0
+foreach {port rppg_in rppg_out lwr_pin} {
+    PCLK_I   cam_pclk_i  lcd_pclk_o  PCLK_I
+    H_REF_I  cam_href_i  lcd_href_o  H_REF_I
+    V_SYNC_I cam_vsync_i lcd_vsync_o V_SYNC_I
+    DATA_I   cam_data_i  lcd_data_o  DATA_I
+} {
+    checked sd_disconnect_pins -sd_name $sd -pin_names "line_write_read_0:$lwr_pin"
+    checked sd_connect_pins -sd_name $sd -pin_names "$port RPPG_0:$rppg_in"
+    checked sd_connect_pins -sd_name $sd -pin_names "RPPG_0:$rppg_out line_write_read_0:$lwr_pin"
+}
+
+# APB: RPPG_0 listens to the whole bus and gates apb3_if_0's PSEL. The
+# reference joins master and apb3_if_0 with one bus-interface (BIF) net, which
+# can't be split, so replace it with plain nets. apb3_if_0's BIF has no
+# PRDATA, which is why the master's PRDATA was tied to 0.
+checked sd_delete_nets -sd_name $sd -net_names {FlashFreeze_SB_0_FIC_0_APB_MASTER}
+set m FlashFreeze_SB_0:FIC_0_APB_M_
+foreach sig {PSEL PENABLE PWRITE PADDR PWDATA PRDATA PREADY PSLVERR} {
+    checked sd_show_bif_pins -sd_name $sd -bif_pin_name {FlashFreeze_SB_0:FIC_0_APB_MASTER} \
+        -pin_names "$m$sig"
+}
+foreach pin {psel_i penable_i pwrite_i paddr_i pwdata_i pready_o pslverr_o} {
+    checked sd_show_bif_pins -sd_name $sd -bif_pin_name {apb3_if_0:BIF_1} \
+        -pin_names "apb3_if_0:$pin"
+}
+checked sd_connect_pins -sd_name $sd -pin_names "${m}PSEL RPPG_0:psel_i"
+checked sd_connect_pins -sd_name $sd -pin_names {RPPG_0:lcd_psel_o apb3_if_0:psel_i}
+foreach {sig pin} {PENABLE penable_i PWRITE pwrite_i PADDR paddr_i PWDATA pwdata_i} {
+    checked sd_connect_pins -sd_name $sd -pin_names "$m$sig apb3_if_0:$pin RPPG_0:$pin"
+}
+# Both targets are always ready and never fail, so apb3_if_0 answers for both.
+checked sd_connect_pins -sd_name $sd -pin_names "${m}PREADY apb3_if_0:pready_o"
+checked sd_connect_pins -sd_name $sd -pin_names "${m}PSLVERR apb3_if_0:pslverr_o"
+catch {sd_clear_pin_attributes -sd_name $sd -pin_names "${m}PRDATA"}
+checked sd_connect_pins -sd_name $sd -pin_names "RPPG_0:prdata_o ${m}PRDATA"
+
+# UART TX pin
+checked sd_disconnect_pins -sd_name $sd -pin_names {UART_interface_0:TX}
+checked sd_mark_pins_unused -sd_name $sd -pin_names {UART_interface_0:TX}
+checked sd_connect_pins -sd_name $sd -pin_names {RPPG_0:uart_tx_o TX}
+checked sd_connect_pins -sd_name $sd -pin_names {RX RPPG_0:uart_rx_i}
+
+save_smartdesign -sd_name $sd
+generate_component -component_name $sd
+build_design_hierarchy
+set_root -module {TOP::work}
