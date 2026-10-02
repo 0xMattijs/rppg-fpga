@@ -11,6 +11,8 @@ REF ?= $(HOME)/projects/hello-fpga-ref/HF10_OV7725_LCD_FF
 SC  := $(REF)/SC/hellofpga_lcd_cam_ff
 OUT := build/reference
 
+.DEFAULT_GOAL := build/reference.hex
+
 SRCS := \
 	$(SC)/main.c \
 	$(SC)/ili9488.c \
@@ -41,9 +43,15 @@ CFLAGS := -mcpu=cortex-m3 -mthumb -O0 -g -fmessage-length=0 -fsigned-char \
 LDFLAGS := -T $(SC)/CMSIS/startup_gcc/production-smartfusion2-execute-in-place.ld \
 	-Xlinker --gc-sections -Wl,-Map,$(OUT)/reference.map --specs=nano.specs
 
-OBJS := $(patsubst %,$(OUT)/obj/%.o,$(notdir $(SRCS)))
-vpath %.c $(sort $(dir $(SRCS)))
-vpath %.S $(sort $(dir $(SRCS)))
+# One explicit rule per source. A vpath search would find the reference
+# project's own ov7725.c before src/drivers/ov7725.c.
+obj = $(OUT)/obj/$(notdir $(1)).o
+OBJS := $(foreach s,$(SRCS),$(call obj,$(s)))
+define compile
+$(call obj,$(1)): $(1) $(SHIM) | $(OUT)/obj
+	arm-none-eabi-gcc $$(CFLAGS) -c -o $$@ $$<
+endef
+$(foreach s,$(SRCS),$(eval $(call compile,$(s))))
 
 build/reference.hex: $(OUT)/reference.elf
 	arm-none-eabi-objcopy -O ihex $< $@
@@ -51,12 +59,6 @@ build/reference.hex: $(OUT)/reference.elf
 
 $(OUT)/reference.elf: $(OBJS)
 	arm-none-eabi-gcc $(CFLAGS) $(LDFLAGS) -o $@ $^
-
-$(OUT)/obj/%.c.o: %.c $(SHIM) | $(OUT)/obj
-	arm-none-eabi-gcc $(CFLAGS) -c -o $@ $<
-
-$(OUT)/obj/%.S.o: %.S | $(OUT)/obj
-	arm-none-eabi-gcc $(CFLAGS) -c -o $@ $<
 
 $(SHIM): src/drivers/ov7725.h
 	mkdir -p $(dir $@)
