@@ -28,6 +28,10 @@
 //                      reference's Image_Enhancement, 0x80 = 1.0. Replaces
 //                      the reference GUI's UART-set constants.
 //   0x40 OVL_COLOR  RW [15:0] digit color, [31:16] waveform color, RGB565
+//   0x44 THUMB_CTRL W  [0] capture the next whole frame as an 80 x 60
+//                      thumbnail (thumb.v); R [0] thumbnail ready
+//   0x48 THUMB_DATA R  [15:0] next thumbnail pixel, RGB565, row by row from
+//                      the top left. Reading it moves to the next pixel.
 //   0x400 + 4 * c   W  waveform column c (0..159): [13:7] last row, [6:0]
 //                      first row, 0..79 down from the top of the strip
 //
@@ -215,6 +219,19 @@ module rppg_top (
         .head(rx_head), .empty(rx_empty), .overflow(rx_overflow)
     );
 
+    // Thumbnail for the PC preview
+    wire        thumb_done;
+    wire [15:0] thumb_pixel;
+    thumb #(.XW(XW), .YW(YW)) u_thumb (
+        .clk(clk), .rst_n(rst_n),
+        .frame_tick(frame_tick), .pix_valid(pix_valid),
+        .pix_x(pix_x), .pix_y(pix_y),
+        .pix_r(pix_r), .pix_g(pix_g), .pix_b(pix_b),
+        .arm(wr && is_reg && reg_ix == 5'h11 && pwdata_i[0]),
+        .pop(sel && penable_i && !pwrite_i && is_reg && reg_ix == 5'h12),
+        .done(thumb_done), .pixel(thumb_pixel)
+    );
+
     uart_tx u_uart (
         .clk(clk), .rst_n(rst_n),
         .start(wr && is_reg && reg_ix == 5'h09), .data(pwdata_i[7:0]),
@@ -265,6 +282,8 @@ module rppg_top (
                 5'h0E: prdata_o = {22'b0, rx_overflow, !rx_empty, rx_head};
                 5'h0F: prdata_o = {2'b0, blue_const_o, green_const_o, red_const_o};
                 5'h10: prdata_o = {wave_color, digit_color};
+                5'h11: prdata_o = {31'b0, thumb_done};
+                5'h12: prdata_o = {16'b0, thumb_pixel};
                 default: ;
             endcase
         end

@@ -19,7 +19,7 @@ proc checked {args} {
 }
 
 set hdl_dir [file join $repo_dir hdl src]
-foreach f {cam_bus.v roi_accumulator.v uart_tx.v uart_rx.v overlay.v rppg_top.v} {
+foreach f {cam_bus.v roi_accumulator.v uart_tx.v uart_rx.v overlay.v thumb.v rppg_top.v} {
     import_files -hdl_source [file join $hdl_dir $f]
 }
 build_design_hierarchy

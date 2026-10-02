@@ -2,7 +2,7 @@
 // Run with:
 //   iverilog -o tb hdl/sim/tb_rppg_top.v hdl/src/rppg_top.v hdl/src/cam_bus.v \
 //     hdl/src/roi_accumulator.v hdl/src/uart_tx.v hdl/src/uart_rx.v \
-//     hdl/src/overlay.v && vvp tb
+//     hdl/src/overlay.v hdl/src/thumb.v && vvp tb
 //
 // The overlay is on, and its darkened panel starts at (8, 8), which covers
 // part of the ROI border. tb_overlay.v checks the rest of its layout.
@@ -186,10 +186,25 @@ module tb_rppg_top;
         @(posedge clk) check(lcd_psel === 1'b0, "apb3_if not selected at 0x1000");
         psel <= 0;
 
+        apb_write(32'h30001044, 1);      // thumbnail of the next whole frame
+        apb_read(32'h30001044); check(rd == 0, "THUMB_CTRL not ready when armed");
         send_frame;   // the ROI takes effect at this frame's VSYNC
         send_frame;   // the second VSYNC latches the first frame's sums
         @(negedge pclk) vsync <= 1;
         repeat (10) @(posedge clk);
+
+        // The thumbnail holds pixel (8c + 4, 8r + 4) at 80 r + c; this frame
+        // is only 3 blocks wide, so check those and skip the rest of each row.
+        apb_read(32'h30001044); check(rd == 1, "THUMB_CTRL ready");
+        for (y = 0; y < H / 8; y = y + 1)
+            for (x = 0; x < 80; x = x + 1) begin
+                apb_read(32'h30001048);
+                if (x < W / 8 && rd[15:0] !== pixel(8 * x + 4, 8 * y + 4)) begin
+                    $display("FAIL: thumbnail (%0d,%0d) = %h, expected %h",
+                             x, y, rd[15:0], pixel(8 * x + 4, 8 * y + 4));
+                    errors = errors + 1;
+                end
+            end
 
         exp_r = 0; exp_g = 0; exp_b = 0; exp_n = 0;
         for (y = Y0; y < Y1; y = y + 1)

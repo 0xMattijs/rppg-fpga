@@ -10,7 +10,11 @@
 #define HR_MAX_HZ          (HR_MAX_MHZ / 1000.0f)
 #define POS_WINDOW         48    /* ~1.6 s, per Wang et al. 2017 */
 #define ESTIMATE_EVERY     30    /* frames between estimates: 1 s at 30 fps */
-#define BPM_SMOOTH_ALPHA   0.3f  /* EMA weight of each new estimate; tied to ESTIMATE_EVERY */
+#define BPM_SMOOTH_ALPHA   0.15f /* EMA weight of each new estimate; tied to ESTIMATE_EVERY */
+#define BPM_GATE_QUALITY   0.08f /* only estimates at or above this quality move the
+                                    smoothed BPM, except the first after a restart.
+                                    Phase 5, against an Apple Watch: MAE 7.8 -> 4.2
+                                    bpm, with 61% of windows used */
 #define MAX_GAP_FILL       5     /* longest frame-counter gap filled by interpolation;
                                     a longer gap restarts the window */
 #define HARMONIC_RATIO     0.25f /* report half the peak frequency when its power is at

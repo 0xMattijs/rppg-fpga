@@ -6,7 +6,8 @@ The full plan lives in Claude Docs:
 ## Summary
 
 - **Goal:** live BPM on the touch display, within 5 bpm mean absolute error of
-  the M5 heart-rate sensor, seated and still, in steady light.
+  a reference heart rate (an Apple Watch; the plan named an M5 heart-rate
+  unit), seated and still, in steady light.
 - **Signal:** 0.7–4 Hz (42–240 bpm) ripple in skin color, strongest in green.
 - **Split:** per-pixel work in fabric; per-frame work on the Cortex-M3.
 
@@ -39,15 +40,14 @@ restarts the estimates and reports the first frame of the new run as
 `# restart <frame>`; `capture.py` sends `restart` and records from that
 frame on.
 
-During validation (Phase 5) it sends one line per second instead:
-
-```
-BPM,<timestamp_ms>,<camera_bpm>,<m5_bpm>,<quality>
-```
+`capture.py` adds one field to each EST line in the `.est` file: the PC's
+clock in Unix seconds at the end of the estimate's window. `rppg.validate`
+matches that against the reference heart rate (Phase 5).
 
 ## Open questions
 
 - Real camera frame rate: 30.01 fps by the fabric's own clock, but all clocks
   come from the on-chip RC oscillator. Check it against the PC clock. See
   [camera-bus.md](camera-bus.md).
-- M5 heart-rate unit logic levels versus the Hello FPGA headers.
+- How far the Apple Watch's heart rate lags the true one. `rppg.validate`
+  prints the error at each lag from 0 to 15 s.

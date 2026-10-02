@@ -35,7 +35,8 @@ def config():
     return dict(fs=float(defs["FRAME_RATE_HZ"]), n=int(defs["WINDOW_SAMPLES"]),
                 nfft=int(defs["FFT_SIZE"]), step=int(defs["ESTIMATE_EVERY"]),
                 alpha=float(defs["BPM_SMOOTH_ALPHA"]), max_fill=int(defs["MAX_GAP_FILL"]),
-                harmonic_ratio=float(defs["HARMONIC_RATIO"]))
+                harmonic_ratio=float(defs["HARMONIC_RATIO"]),
+                gate=float(defs["BPM_GATE_QUALITY"]))
 
 
 def run_c(csv):
@@ -48,7 +49,7 @@ def run_c(csv):
 
 def track(frame, rgb, cfg):
     return pos.track(frame, rgb, cfg["fs"], cfg["n"], cfg["step"], cfg["alpha"], cfg["nfft"],
-                     cfg["max_fill"], cfg["harmonic_ratio"])
+                     cfg["max_fill"], cfg["harmonic_ratio"], cfg["gate"])
 
 
 def run_py(csv, cfg):

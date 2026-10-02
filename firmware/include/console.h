@@ -8,6 +8,7 @@
  *   gain <r> <g> <b>         LCD color gains in hex, 80 = 1.0, up to 3ff
  *   color <digit> <wave>     digit and waveform colors, RGB565 in hex
  *   roi <x0> <y0> <x1> <y1>  move the ROI, in camera pixels (x1, y1 exclusive)
+ *   preview <0|1>            camera preview for the PC off or on (preview.h)
  *   restart                  restart the estimates at the next frame, which
  *                            the board reports as "# restart <frame>"
  *

@@ -83,9 +83,12 @@ def estimate_bpm(x, fs, nfft=512, band=HR_BAND, harmonic_ratio=HARMONIC_RATIO):
     quality = spec[k] / spec[idx].sum()
 
     # Parabolic interpolation on power across the peak bin and its neighbors.
+    # The half-frequency bin need not be a local maximum, and then the
+    # parabola's vertex can land bins away: keep it within half a bin.
     a, b, c = spec[k - 1], spec[k], spec[k + 1]
     den = a - 2 * b + c
     delta = 0.5 * (a - c) / den if den < 0 else 0.0
+    delta = min(max(delta, -0.5), 0.5)
     return (k + delta) * fs / nfft * 60, quality, f, spec
 
 
@@ -105,12 +108,13 @@ def windows(frame, rgb, n=300, step=30, max_fill=MAX_GAP_FILL):
             yield f, np.array(buf)
 
 
-def track(frame, rgb, fs, n=300, step=30, alpha=0.3, nfft=512, max_fill=MAX_GAP_FILL,
-          harmonic_ratio=HARMONIC_RATIO):
+def track(frame, rgb, fs, n=300, step=30, alpha=0.15, nfft=512, max_fill=MAX_GAP_FILL,
+          harmonic_ratio=HARMONIC_RATIO, gate=0.08):
     """Estimate BPM over time, as the firmware does.
 
     Returns rows of (frame, raw_bpm, smoothed_bpm, quality). Smoothing is an
-    exponential moving average seeded with the first estimate after a restart.
+    exponential moving average seeded with the first estimate after a restart;
+    after that, only estimates with quality >= gate move it.
     """
     rows, smooth = [], None
     for f, w in windows(frame, rgb, n, step, max_fill):
@@ -119,7 +123,10 @@ def track(frame, rgb, fs, n=300, step=30, alpha=0.3, nfft=512, max_fill=MAX_GAP_
             continue
         pulse = bandpass(pos(w, fs), fs)
         bpm, q, _, _ = estimate_bpm(pulse, fs, nfft, harmonic_ratio=harmonic_ratio)
-        smooth = bpm if smooth is None else smooth + alpha * (bpm - smooth)
+        if smooth is None:
+            smooth = bpm
+        elif q >= gate:
+            smooth += alpha * (bpm - smooth)
         rows.append((f, bpm, smooth, q))
     return rows
 

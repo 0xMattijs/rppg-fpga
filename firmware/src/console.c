@@ -3,6 +3,7 @@
 #include "config.h"
 #include "console.h"
 #include "ili9488.h"
+#include "preview.h"
 #include "uart.h"
 #include "ui.h"
 
@@ -138,6 +139,13 @@ static void run(const char *cmd)
             return;
         }
         ui_set_colors(v[0], v[1]);
+    } else if (starts_with(cmd, "preview")) {
+        p = cmd + 7;
+        if (next_num(&p, 10, &v[0]) != 0 || v[0] > 1) {
+            reply("error", "preview <0|1>");
+            return;
+        }
+        preview_set(v[0]);
     } else if (starts_with(cmd, "restart")) {
         app_restart();
     } else if (starts_with(cmd, "roi")) {

@@ -12,8 +12,9 @@ camera ──► fabric: ROI / skin mask / RGB accumulators ──► per-frame 
                                                               │ (APB, polled)
                                                               ▼
             display ◄── Cortex-M3: normalize ─ POS ─ band-pass ─ FFT ─ BPM
-                                                              ▲
-                                       M5 heart-rate unit ────┘ (I2C, ground truth)
+                                                              │
+            PC: capture.py ◄── UART ──────────────────────────┘
+                 validate.py ◄── Apple Watch heart rate (Health export, ground truth)
 ```
 
 ## Repository layout
@@ -35,8 +36,8 @@ See [docs/plan.md](docs/plan.md) for the seven-phase build plan.
 - [x] Phase 1: Reference design
 - [x] Phase 2: ROI accumulator in fabric
 - [x] Phase 3: Signal processing on the Cortex-M3
-- [ ] Phase 4: Touch UI
-- [ ] Phase 5: Validation with the M5 sensor
+- [x] Phase 4: Display UI (buttons; the touch panel is not wired)
+- [ ] Phase 5: Validation against an Apple Watch
 - [ ] Phase 6: Multi-ROI grid and skin detection
 - [ ] Phase 7: Pulse visualization (stretch)
 
@@ -67,6 +68,10 @@ python -m rppg.capture --out ../data/session.csv
 # Check the board's estimates against the host build of the same C code
 python -m rppg.check_board ../data/session.csv
 
+# See the camera on the PC (80 x 60, about once a second) to place your face
+# in the ROI; close the window before capturing
+python -m rppg.preview
+
 # Send console commands: color test pattern, ROI, raw LCD commands
 python -m rppg.send "test 1" "roi 240 180 400 300"
 
@@ -82,6 +87,7 @@ python -m rppg.synth ../data/synth.csv --bpm 72 --realistic
 # Score POS against the true BPM as each effect grows (about 1 minute)
 python -m rppg.stress
 
-# Compare against the M5 reference (Phase 5)
-python -m rppg.validate ../data/log.csv
+# Compare with an Apple Watch: start a Workout on the watch, record with
+# capture.py, then export from the Health app (Phase 5)
+python -m rppg.validate ../data/session.est --watch export.zip --plot session.png
 ```

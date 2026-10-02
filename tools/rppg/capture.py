@@ -11,6 +11,9 @@ can repeat the estimates from it. Leave relay mode with
 
 The board's own BPM estimates (EST lines) go to a second file next to the
 CSV, with the extension .est; rppg.check_board compares them with the PC.
+Each line gets one more field: the PC's clock (Unix seconds) at the end of
+the estimate's window, the time the line arrived less the time the estimate
+took. rppg.validate matches it against a watch's heart rate.
 """
 import argparse
 import sys
@@ -33,7 +36,9 @@ def main():
         f.write("frame,timestamp_us,sum_r,sum_g,sum_b,pixel_count\n")
         ser.write(b"&")           # PIC32: relay mode; ignored if already in it
         time.sleep(0.1)
-        ser.write(b"\nrestart\n")  # relayed to the FPGA (firmware/include/console.h)
+        # Relayed to the FPGA (firmware/include/console.h). The preview would
+        # take UART time and main-loop time from the recording.
+        ser.write(b"\npreview 0\nrestart\n")
         print(f"Recording to {args.out}; press Ctrl+C to stop.", file=sys.stderr)
         rows = 0
         start = None              # frame of "# restart"; nothing is kept before it
@@ -48,8 +53,9 @@ def main():
                 elif start is None:
                     continue
                 elif line.startswith("EST ") and len(line.split()) == 6:
-                    est.write(line + "\n")
                     _, frame, bpm_raw, bpm, quality, us = line.split()
+                    est.write(f"{line} {time.time() - int(us) / 1e6:.3f}\n")
+                    est.flush()
                     print(f"frame {frame}: {bpm} bpm (this window {bpm_raw}, "
                           f"quality {quality}, {int(us) / 1000:.0f} ms)", file=sys.stderr)
                 elif (line.count(",") == 5 and line.split(",")[0].isdigit()

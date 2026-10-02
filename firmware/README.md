@@ -41,6 +41,9 @@ Estimates start at power-on, so the board works without a PC. The first one
 comes after 10 s, the length of the window; until then the display shows
 `---`.
 
+- **Digits:** the smoothed BPM. After the first estimate, only estimates
+  with quality at least `BPM_GATE_QUALITY` (the red end of the bar) move it,
+  so the digits hold through bad windows instead of following them.
 - **Waveform:** mean green over the ROI, high-passed and inverted so beats
   point up, about 5 s across. The SysTick handler updates it for every frame,
   so it keeps scrolling while an estimate runs. It autoscales to recent
@@ -75,6 +78,10 @@ needs, so commands such as the gamma tables (`E0`, `E1`) can be tried
 without a rebuild. `gain` and `color` try other color gains and overlay
 colors the same way; copy values that work into `include/config.h`. All of
 these last until the next power cycle.
+
+`preview 1` makes the board send an 80 × 60 thumbnail of the camera (the
+fabric's `thumb.v`), which `python -m rppg.preview` shows; `capture.py`
+turns it off.
 
 ## Checking the DSP on the board
 

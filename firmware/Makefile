@@ -7,7 +7,7 @@
 
 NAME := rppg
 OUT  := build/rppg
-APP_SRCS = src/main.c src/uart.c src/console.c src/dsp/rppg.c src/ui/ui.c
+APP_SRCS = src/main.c src/uart.c src/console.c src/preview.c src/dsp/rppg.c src/ui/ui.c
 include sf2.mk
 
 # An estimate must finish within ESTIMATE_EVERY frames (1 s); at -O0 it

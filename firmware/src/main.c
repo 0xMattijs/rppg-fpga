@@ -6,6 +6,7 @@
 #include "rppg.h"
 #include "uart.h"
 #include "ui.h"
+#include "preview.h"
 #include "OV7725.h"
 #include "ili9488.h"
 #include "drivers/mss_i2c/mss_i2c.h"
@@ -107,6 +108,32 @@ void SysTick_Handler(void)
     q_head = h + 1;
 }
 
+/* Waits up to 2 ms for the I2C transfer in progress. */
+static mss_i2c_status_t i2c_wait(void)
+{
+    uint32_t start = DWT->CYCCNT;
+    mss_i2c_status_t st;
+    while ((st = MSS_I2C_get_status(&g_mss_i2c0)) == MSS_I2C_IN_PROGRESS &&
+           DWT->CYCCNT - start < SystemCoreClock / 500)
+        ;
+    return st;
+}
+
+/* Reads one camera register: SCCB has no repeated start, so the address
+ * goes in its own write. (The driver's ReadReg() skips that write.) Returns
+ * -1 if the camera doesn't answer. */
+static int cam_read(uint8_t reg)
+{
+    uint8_t val;
+    MSS_I2C_write(&g_mss_i2c0, 0x21, &reg, 1, MSS_I2C_RELEASE_BUS);
+    if (i2c_wait() != MSS_I2C_SUCCESS)
+        return -1;
+    MSS_I2C_read(&g_mss_i2c0, 0x21, &val, 1, MSS_I2C_RELEASE_BUS);
+    if (i2c_wait() != MSS_I2C_SUCCESS)
+        return -1;
+    return val;
+}
+
 /* Addresses that answer on the camera's I2C bus, for finding the LCD
  * board's touch controller. Reported in the header line. */
 #define I2C_SCAN_MAX 8
@@ -118,12 +145,7 @@ static void i2c_scan(void)
     for (uint8_t a = 0x08; a < 0x78; a++) {
         uint8_t byte;
         MSS_I2C_read(&g_mss_i2c0, a, &byte, 1, MSS_I2C_RELEASE_BUS);
-        uint32_t start = DWT->CYCCNT;
-        mss_i2c_status_t st;
-        while ((st = MSS_I2C_get_status(&g_mss_i2c0)) == MSS_I2C_IN_PROGRESS &&
-               DWT->CYCCNT - start < SystemCoreClock / 500)    /* 2 ms */
-            ;
-        if (st == MSS_I2C_SUCCESS && i2c_found_n < I2C_SCAN_MAX)
+        if (i2c_wait() == MSS_I2C_SUCCESS && i2c_found_n < I2C_SCAN_MAX)
             i2c_found[i2c_found_n++] = a;
     }
 }
@@ -200,6 +222,10 @@ int main(void)
     OV7725_init();
     ILI9488_init();
     i2c_scan();
+    /* The values the camera locked at: with the gain high, row noise swamps
+     * the pulse. Exposure is AECH:AEC, in rows. */
+    int cam_com8 = cam_read(0x13), cam_gain = cam_read(0x00);
+    int cam_exposure = cam_read(0x08) << 8 | cam_read(0x10);
 
     /* The instruction cache in front of the eNVM is off after reset, and
      * every fetch then waits for the eNVM. Turn it on after the start-up
@@ -248,6 +274,12 @@ int main(void)
                 uart_puthex(cc_cr_boot);
                 uart_puts(", ENVM_CR ");
                 uart_puthex(envm_cr_boot);
+                uart_puts(", camera COM8 ");
+                uart_puthex(cam_com8);
+                uart_puts(" gain ");
+                uart_puthex(cam_gain);
+                uart_puts(" exposure ");
+                uart_puthex(cam_exposure);
                 uart_puts(", I2C");
                 for (int i = 0; i < i2c_found_n; i++) {
                     uart_putc(' ');
@@ -278,6 +310,7 @@ int main(void)
             uart_putu(f.sum_b);         uart_putc(',');
             uart_putu(f.count);
             uart_puts("\r\n");
+            preview_poll();
         }
 
 #if ENABLE_DSP

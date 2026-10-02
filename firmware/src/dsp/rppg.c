@@ -274,17 +274,23 @@ int rppg_estimate(rppg_result_t *out)
     }
 
     /* Parabolic interpolation on power. kmin >= 1 and kmax < FFT_SIZE / 2,
-     * so both neighbors exist. */
+     * so both neighbors exist. The half-frequency bin need not be a local
+     * maximum, and then the vertex can land bins away: keep it within half
+     * a bin (as pos.py does). */
     float a = re[kbest - 1] * re[kbest - 1] + im[kbest - 1] * im[kbest - 1];
     float c = re[kbest + 1] * re[kbest + 1] + im[kbest + 1] * im[kbest + 1];
     float den = a - 2.0f * pbest + c;
     float delta = den < 0.0f ? 0.5f * (a - c) / den : 0.0f;
+    if (delta < -0.5f)
+        delta = -0.5f;
+    else if (delta > 0.5f)
+        delta = 0.5f;
 
     out->bpm_raw = (kbest + delta) * df * 60.0f;
     out->quality = pbest / total;
     if (bpm_smooth < 0.0f)
         bpm_smooth = out->bpm_raw;
-    else
+    else if (out->quality >= BPM_GATE_QUALITY)
         bpm_smooth += BPM_SMOOTH_ALPHA * (out->bpm_raw - bpm_smooth);
     out->bpm = bpm_smooth;
     return 0;
