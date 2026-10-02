@@ -7,6 +7,7 @@
 #include "hal.h"
 #include "Hello_system.h"
 #include "drivers/mss_i2c/mss_i2c.h"
+#include "system_m2sxxx.h"
 #include "OV7725.h"
 
 uint8_t rx_buff[64],tx_buff[64];
@@ -190,14 +191,31 @@ uint8_t ReadReg(uint8_t addr)
 	delay_us(65500);
 	return rx_buff[0];
 }
+// Busy-wait for x microseconds, timed by the Cortex-M3 cycle counter.
+// A NOP loop runs from eNVM with wait states, so its speed is a guess:
+// estimated at 10-15 us per "us" at 100 MHz from the instruction count.
 void delay_us(uint64_t x)
 {
-	for(uint64_t j = 0; j<x; j++)
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+	uint32_t per_us = SystemCoreClock / 1000000u;
+	uint32_t start = DWT->CYCCNT;
+	if (DWT->CYCCNT == start && DWT->CYCCNT == start)
 	{
-		for(int i =0; i<100; i++)
-		{
-			asm("NOP\n");
-		}
+		// No cycle counter: fall back to the loop, scaled by the estimate above.
+		for (uint64_t j = 0; j < x / 10; j++)
+			for (int i = 0; i < 100; i++)
+				asm("NOP\n");
+		return;
+	}
+	// Wait in 1 ms chunks so the 32-bit cycle difference cannot wrap.
+	while (x > 0)
+	{
+		uint32_t chunk = x > 1000 ? 1000 : (uint32_t)x;
+		start = DWT->CYCCNT;
+		while (DWT->CYCCNT - start < chunk * per_us)
+			;
+		x -= chunk;
 	}
 }
 void Reset()
