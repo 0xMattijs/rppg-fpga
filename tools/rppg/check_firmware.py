@@ -10,7 +10,6 @@ sessions it also reports the error against the true BPM.
     python -m rppg.check_firmware a.csv ...  # your own recordings
 """
 import argparse
-import re
 import subprocess
 import sys
 import tempfile
@@ -19,10 +18,10 @@ from pathlib import Path
 import numpy as np
 
 from . import pos
+from .gen_coeffs import config_band, config_defines
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST_DIR = ROOT / "firmware/test"
-CONFIG = ROOT / "firmware/include/config.h"
 
 BPM_TOL = 0.01
 QUALITY_TOL = 1e-3
@@ -30,7 +29,9 @@ PULSE_TOL = 1e-3      # relative to the pulse's peak amplitude
 
 
 def config():
-    defs = dict(re.findall(r"#define\s+(\w+)\s+([\d.]+)f?", CONFIG.read_text()))
+    defs = config_defines()
+    if config_band(defs) != pos.HR_BAND:
+        sys.exit(f"HR band differs: config.h {config_band(defs)}, pos.py {pos.HR_BAND}")
     return dict(fs=float(defs["FRAME_RATE_HZ"]), n=int(defs["WINDOW_SAMPLES"]),
                 nfft=int(defs["FFT_SIZE"]), step=int(defs["ESTIMATE_EVERY"]),
                 alpha=float(defs["BPM_SMOOTH_ALPHA"]))

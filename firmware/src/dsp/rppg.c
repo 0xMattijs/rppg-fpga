@@ -15,6 +15,9 @@
 #define BP_PAD    (3 * BP_TAPS)          /* scipy filtfilt default padlen */
 #define FFT_LOG2  9
 
+#if BP_FS_HZ != FRAME_RATE_HZ || BP_HR_MIN_MHZ != HR_MIN_MHZ || BP_HR_MAX_MHZ != HR_MAX_MHZ
+#error "bandpass_coeffs.h does not match config.h; run python -m rppg.gen_coeffs"
+#endif
 #if (1 << FFT_LOG2) != FFT_SIZE
 #error "FFT_LOG2 does not match FFT_SIZE"
 #endif
@@ -67,15 +70,17 @@ static void pos(void)
         for (int i = t; i < t + POS_WINDOW; i++)
             for (int c = 0; c < 3; c++)
                 mean[c] += rgb[i][c];
+        /* Divide once per window; soft-float divides are slow on the M3. */
+        float inv[3];
         for (int c = 0; c < 3; c++)
-            mean[c] /= POS_WINDOW;
+            inv[c] = POS_WINDOW / mean[c];
 
         float s1[POS_WINDOW], s2[POS_WINDOW];
         float m1 = 0, m2 = 0;
         for (int i = 0; i < POS_WINDOW; i++) {
-            float r = rgb[t + i][0] / mean[0];
-            float g = rgb[t + i][1] / mean[1];
-            float b = rgb[t + i][2] / mean[2];
+            float r = rgb[t + i][0] * inv[0];
+            float g = rgb[t + i][1] * inv[1];
+            float b = rgb[t + i][2] * inv[2];
             s1[i] = g - b;
             s2[i] = -2.0f * r + g + b;
             m1 += s1[i];

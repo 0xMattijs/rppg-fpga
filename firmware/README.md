@@ -22,5 +22,6 @@ python -m rppg.check_firmware            # synthetic sessions, 45-230 bpm
 python -m rppg.check_firmware rec.csv    # your own recordings
 ```
 
-After you change `FRAME_RATE_HZ` or the HR band, regenerate the filter with
-`python -m rppg.gen_coeffs --fs <rate>`.
+After you change `FRAME_RATE_HZ` or the HR band in `include/config.h`,
+regenerate the filter with `python -m rppg.gen_coeffs`. The build fails with
+an `#error` until you do. The HR band must also match `HR_BAND` in `pos.py`.
