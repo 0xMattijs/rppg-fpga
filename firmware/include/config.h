@@ -20,6 +20,11 @@
 #define HARMONIC_RATIO     0.25f /* report half the peak frequency when its power is at
                                     least this fraction of the peak's */
 
+/* Light calibration (SW3): how long the camera's automatic exposure, gain,
+ * and white balance run before they lock again. The digits count down the
+ * seconds. Power-up waits 2 s (ov7725.c). */
+#define CAL_SETTLE_MS      3000
+
 /* Display overlay (Phase 4, firmware/src/ui/ui.c) */
 #define UI_MIRROR          1     /* 1 if the LCD shows the camera image mirrored;
                                     flips the overlay so the digits read right */

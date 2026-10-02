@@ -146,6 +146,8 @@ static void run(const char *cmd)
             return;
         }
         preview_set(v[0]);
+    } else if (starts_with(cmd, "calibrate")) {
+        app_calibrate();
     } else if (starts_with(cmd, "restart")) {
         app_restart();
     } else if (starts_with(cmd, "roi")) {

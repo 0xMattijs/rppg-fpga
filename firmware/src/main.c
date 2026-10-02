@@ -163,6 +163,62 @@ void app_restart(void)
     restart_requested = 1;
 }
 
+/* Light calibration (SW3, console "calibrate"): the camera's automatic
+ * exposure, gain, and white balance run for CAL_SETTLE_MS on the scene in
+ * front of it, then lock again, as at power-up (ov7725.c). Frames in
+ * between are not used. */
+#define COM8_AUTO   0x0F    /* AEC, AWB, AGC on (the reference's setting) */
+#define COM8_LOCKED 0x08    /* all three off: the sensor keeps the last values */
+static int calibrating;
+static uint32_t cal_start;
+
+void app_calibrate(void)
+{
+    WriteReg(OV7725_COM8, COM8_AUTO);
+    cal_start = DWT->CYCCNT;
+    calibrating = 1;
+}
+
+/* Reports the camera's gain and exposure: with the gain high, row noise
+ * swamps the pulse. Exposure is AECH:AEC, in rows. */
+static void report_camera(void)
+{
+    int com8 = cam_read(OV7725_COM8), gain = cam_read(OV7725_GAIN);
+    int exposure = cam_read(OV7725_AECH) << 8 | cam_read(OV7725_AEC);
+    uart_puts("camera COM8 ");
+    uart_puthex(com8);
+    uart_puts(" gain ");
+    uart_puthex(gain);
+    uart_puts(" exposure ");
+    uart_puthex(exposure);
+}
+
+/* Locks the camera once the calibration has settled; call from the main
+ * loop. */
+static void poll_calibration(void)
+{
+    if (!calibrating)
+        return;
+    uint32_t ms = (DWT->CYCCNT - cal_start) / (SystemCoreClock / 1000);
+    if (ms < CAL_SETTLE_MS) {
+        ui_show_countdown((CAL_SETTLE_MS - ms + 999) / 1000);   /* 3, 2, 1 */
+        return;
+    }
+    WriteReg(OV7725_COM8, COM8_LOCKED);
+    calibrating = 0;
+    /* The frame in progress may have been exposed before the lock. */
+    roi_valid_from = roi[REG_FRAME] + 2;
+#if ENABLE_DSP
+    rppg_init();
+    ui_show_none();
+#endif
+    if (uart_host_seen()) {
+        uart_puts("# calibrated, ");
+        report_camera();
+        uart_puts("\r\n");
+    }
+}
+
 int app_set_roi(int x0, int y0, int x1, int y1)
 {
     if (x0 < 0 || y0 < 0 || x1 > FRAME_W || y1 > FRAME_H || x0 >= x1 || y0 >= y1)
@@ -186,8 +242,8 @@ int app_set_roi(int x0, int y0, int x1, int y1)
 }
 
 /* SW1 steps the ROI through a 3 x 3 grid of positions, starting in the
- * middle; SW2 steps through three sizes; SW3 toggles the color test
- * pattern. */
+ * middle; SW2 steps through three sizes; SW3 recalibrates the camera to the
+ * light (app_calibrate). The color test pattern is the console's "test". */
 static void handle_buttons(void)
 {
     static const int16_t pos[9][2] = {
@@ -212,7 +268,7 @@ static void handle_buttons(void)
         app_set_roi(x0, y0, x0 + w, y0 + h);
     }
     if (ev & 4)
-        ui_set_test(!ui_test());
+        app_calibrate();
 }
 
 int main(void)
@@ -222,10 +278,6 @@ int main(void)
     OV7725_init();
     ILI9488_init();
     i2c_scan();
-    /* The values the camera locked at: with the gain high, row noise swamps
-     * the pulse. Exposure is AECH:AEC, in rows. */
-    int cam_com8 = cam_read(0x13), cam_gain = cam_read(0x00);
-    int cam_exposure = cam_read(0x08) << 8 | cam_read(0x10);
 
     /* The instruction cache in front of the eNVM is off after reset, and
      * every fetch then waits for the eNVM. Turn it on after the start-up
@@ -246,6 +298,7 @@ int main(void)
     for (;;) {
         handle_buttons();
         console_poll();
+        poll_calibration();
 
         if (q_tail == q_head)
             continue;
@@ -274,12 +327,8 @@ int main(void)
                 uart_puthex(cc_cr_boot);
                 uart_puts(", ENVM_CR ");
                 uart_puthex(envm_cr_boot);
-                uart_puts(", camera COM8 ");
-                uart_puthex(cam_com8);
-                uart_puts(" gain ");
-                uart_puthex(cam_gain);
-                uart_puts(" exposure ");
-                uart_puthex(cam_exposure);
+                uart_puts(", ");
+                report_camera();
                 uart_puts(", I2C");
                 for (int i = 0; i < i2c_found_n; i++) {
                     uart_putc(' ');
@@ -314,7 +363,7 @@ int main(void)
         }
 
 #if ENABLE_DSP
-        if (f.count == 0 || (int32_t)(f.frame - roi_valid_from) < 0)
+        if (f.count == 0 || calibrating || (int32_t)(f.frame - roi_valid_from) < 0)
             continue;
         rppg_sample_t s;
         rppg_result_t res;

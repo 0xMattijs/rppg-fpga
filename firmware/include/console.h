@@ -9,6 +9,8 @@
  *   color <digit> <wave>     digit and waveform colors, RGB565 in hex
  *   roi <x0> <y0> <x1> <y1>  move the ROI, in camera pixels (x1, y1 exclusive)
  *   preview <0|1>            camera preview for the PC off or on (preview.h)
+ *   calibrate                recalibrate the camera to the light, as SW3 does;
+ *                            the board reports "# calibrated, ..." when locked
  *   restart                  restart the estimates at the next frame, which
  *                            the board reports as "# restart <frame>"
  *
@@ -23,5 +25,6 @@ void console_poll(void);
 /* Implemented in main.c. Returns 0, or -1 if the box doesn't fit the frame. */
 int app_set_roi(int x0, int y0, int x1, int y1);
 void app_restart(void);
+void app_calibrate(void);
 
 #endif

@@ -63,11 +63,16 @@ and SW1 (silkscreen PB3_DEBUG, FF_SW2, PB1_DEBUG).
 |--------|--------|
 | SW1 (right) | Move the ROI to the next of nine positions, a 3 × 3 grid starting in the middle |
 | SW2 (middle) | Change the ROI size: 160 × 120, 240 × 180, 96 × 72 (camera pixels) |
-| SW3 (left) | Color test pattern on or off |
+| SW3 (left) | Recalibrate the camera to the light: exposure, gain, and white balance adjust while the digits count down 3, 2, 1, then lock |
 
-Moving the ROI restarts the estimates, so the display shows `---` for 10 s.
-Don't press SW1 or SW2 while recording for `rppg.check_board`: the PC can't
-see the restart.
+Moving the ROI or recalibrating restarts the estimates, so the display
+shows `---` for 10 s (13 s after SW3). Don't press the buttons while
+recording for `rppg.check_board`: the PC can't see the restart.
+
+Recalibrate with SW3 after the light changes or after you sit down: the
+camera then sets its exposure for your face rather than for whatever it saw
+at power-up. A dim scene makes it raise the gain, and row noise then swamps
+the pulse. The color test pattern moved to the console (`test 1`).
 
 ## Console
 

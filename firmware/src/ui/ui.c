@@ -70,6 +70,12 @@ void ui_show_bpm(float bpm, float quality)
     regs[REG_OVL_BAR] = color << 16 | (uint32_t)len;
 }
 
+void ui_show_countdown(int n)
+{
+    set_digits(0, 0, seg7[n < 0 ? 0 : n > 9 ? 9 : n]);
+    regs[REG_OVL_BAR] = 0;
+}
+
 void ui_set_gain(uint32_t r, uint32_t g, uint32_t b)
 {
     regs[REG_COLOR_GAIN] = (b & 0x3FF) << 20 | (g & 0x3FF) << 10 | (r & 0x3FF);
@@ -96,10 +102,6 @@ void ui_set_test(int on)
     regs[REG_OVL_CTRL] = on ? ctrl | OVL_TEST : ctrl & ~OVL_TEST;
 }
 
-int ui_test(void)
-{
-    return (regs[REG_OVL_CTRL] & OVL_TEST) != 0;
-}
 
 /* Draws the history as a line, oldest on the left. Each column spans the
  * rows between its sample and the previous one, at least 3 rows, since the
