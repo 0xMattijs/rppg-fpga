@@ -1,12 +1,14 @@
 // Fabric block: camera adapter, ROI accumulator, and an APB target with a
-// UART transmitter (Phase 2), and the display overlay (Phase 4). One instance goes into the reference design's
-// TOP SmartDesign (see libero/build.tcl).
+// UART transmitter (Phase 2), the display overlay (Phase 4), and the skin
+// mask and ROI grid (Phase 6). One instance goes into the reference
+// design's TOP SmartDesign (see libero/build.tcl).
 //
 // APB: shares the MSS FIC_0 master with the LCD's apb3_if. That block
 // decodes only PADDR[11:0], so this one claims PADDR[12] and hides those
 // cycles from it. Registers, from 0x30001000:
 //
-//   0x00 SUM_R      R  red sum over the ROI, last complete frame
+//   0x00 SUM_R      R  red sum over the ROI, last complete frame, every
+//                      pixel (the skin mask applies only to the grid)
 //   0x04 SUM_G      R
 //   0x08 SUM_B      R
 //   0x0C COUNT      R  pixels summed
@@ -31,7 +33,16 @@
 //   0x44 THUMB_CTRL W  [0] capture the next whole frame as an 80 x 60
 //                      thumbnail (thumb.v); R [0] thumbnail ready
 //   0x48 THUMB_DATA R  [15:0] next thumbnail pixel, RGB565, row by row from
-//                      the top left. Reading it moves to the next pixel.
+//                      the top left, with the skin mask in bit 0. Reading
+//                      it moves to the next pixel.
+//   0x4C SKIN_C     RW [7:0] Cb min, [15:8] Cb max, [23:16] Cr min,
+//                      [31:24] Cr max (skin_mask.v); used from the next
+//   0x50 SKIN_Y     RW [7:0] Y min, [15:8] Y max,        frame on
+//                      [16] grid sums skin pixels only
+//   0x200 + 16 * c + 4 * k
+//                   R  grid cell c (0..15, row by row), last complete
+//                      frame (grid_accumulator.v): k = 0 red, 1 green,
+//                      2 blue sum, 3 pixel count
 //   0x400 + 4 * c   W  waveform column c (0..159): [13:7] last row, [6:0]
 //                      first row, 0..79 down from the top of the strip
 //
@@ -106,6 +117,12 @@ module rppg_top (
     wire [1:0]    ovl_mode;
     wire [15:0]   ovl_color;
 
+    // Skin limits, and the copies used for the current frame
+    reg [7:0]  y_min, y_max, cb_min, cb_max, cr_min, cr_max;
+    reg        mask_en;
+    reg [7:0]  act_y_min, act_y_max, act_cb_min, act_cb_max, act_cr_min, act_cr_max;
+    reg        act_mask_en;
+
     reg        ovl_enable, ovl_mirror, ovl_test;
     reg [20:0] ovl_digits;
     reg [15:0] digit_color, wave_color;
@@ -147,6 +164,8 @@ module rppg_top (
         if (!rst_n) begin
             us_div <= 0; us_now <= 0; timestamp <= 0;
             act_x0 <= 240; act_x1 <= 400; act_y0 <= 180; act_y1 <= 300;
+            act_y_min <= 0; act_y_max <= 0; act_cb_min <= 0; act_cb_max <= 0;
+            act_cr_min <= 0; act_cr_max <= 0; act_mask_en <= 0;
         end else begin
             if (us_div == 99) begin
                 us_div <= 0;
@@ -158,16 +177,50 @@ module rppg_top (
                 timestamp <= us_now;
                 act_x0 <= roi_x0; act_x1 <= roi_x1;
                 act_y0 <= roi_y0; act_y1 <= roi_y1;
+                act_y_min <= y_min;   act_y_max <= y_max;
+                act_cb_min <= cb_min; act_cb_max <= cb_max;
+                act_cr_min <= cr_min; act_cr_max <= cr_max;
+                act_mask_en <= mask_en;
             end
         end
     end
 
-    // APB target
-    wire        mine   = paddr_i[12];
-    wire        sel    = psel_i & mine;
-    wire        wr     = sel & penable_i & pwrite_i;
-    wire        is_reg = ~paddr_i[10];     // registers; else waveform RAM
-    wire [4:0]  reg_ix = paddr_i[6:2];
+    // Skin mask and ROI grid
+    wire          sk_valid, sk_skin;
+    wire [XW-1:0] sk_x;
+    wire [YW-1:0] sk_y;
+    wire [7:0]    sk_r, sk_g, sk_b;
+    skin_mask #(.XW(XW), .YW(YW)) u_skin (
+        .clk(clk), .rst_n(rst_n),
+        .pix_valid(pix_valid), .pix_x(pix_x), .pix_y(pix_y),
+        .pix_r(pix_r), .pix_g(pix_g), .pix_b(pix_b),
+        .y_min(act_y_min), .y_max(act_y_max),
+        .cb_min(act_cb_min), .cb_max(act_cb_max),
+        .cr_min(act_cr_min), .cr_max(act_cr_max),
+        .out_valid(sk_valid), .out_x(sk_x), .out_y(sk_y),
+        .out_r(sk_r), .out_g(sk_g), .out_b(sk_b), .skin(sk_skin)
+    );
+
+    wire [23:0] cell_r, cell_g, cell_b;
+    wire [15:0] cell_n;
+    grid_accumulator #(.XW(XW), .YW(YW)) u_grid (
+        .clk(clk), .rst_n(rst_n),
+        .frame_tick(frame_tick), .pix_valid(sk_valid), .pix_x(sk_x), .pix_y(sk_y),
+        .pix_r(sk_r), .pix_g(sk_g), .pix_b(sk_b),
+        .skin(sk_skin), .mask_en(act_mask_en),
+        .roi_x0(act_x0), .roi_x1(act_x1), .roi_y0(act_y0), .roi_y1(act_y1),
+        .rd_cell(paddr_i[7:4]),
+        .rd_r(cell_r), .rd_g(cell_g), .rd_b(cell_b), .rd_n(cell_n)
+    );
+
+    // APB target. The grid's RAM answers one cycle after the address, in
+    // the access phase.
+    wire        mine    = paddr_i[12];
+    wire        sel     = psel_i & mine;
+    wire        wr      = sel & penable_i & pwrite_i;
+    wire        is_reg  = ~paddr_i[10] & ~paddr_i[9];  // registers
+    wire        is_cell = ~paddr_i[10] &  paddr_i[9];  // grid cells
+    wire [4:0]  reg_ix  = paddr_i[6:2];               // else waveform RAM
     assign lcd_psel_o  = psel_i & ~mine;
 
     overlay #(.XW(XW), .YW(YW)) u_ovl (
@@ -176,7 +229,7 @@ module rppg_top (
         .enable(ovl_enable), .mirror(ovl_mirror), .test(ovl_test), .digit_segs(ovl_digits),
         .digit_color(digit_color), .wave_color(wave_color),
         .bar_len(bar_len), .bar_color(bar_color),
-        .wave_we(wr && !is_reg), .wave_waddr(paddr_i[9:2]), .wave_wdata(pwdata_i[13:0]),
+        .wave_we(wr && paddr_i[10]), .wave_waddr(paddr_i[9:2]), .wave_wdata(pwdata_i[13:0]),
         .mode(ovl_mode), .color(ovl_color)
     );
 
@@ -224,9 +277,9 @@ module rppg_top (
     wire [15:0] thumb_pixel;
     thumb #(.XW(XW), .YW(YW)) u_thumb (
         .clk(clk), .rst_n(rst_n),
-        .frame_tick(frame_tick), .pix_valid(pix_valid),
-        .pix_x(pix_x), .pix_y(pix_y),
-        .pix_r(pix_r), .pix_g(pix_g), .pix_b(pix_b),
+        .frame_tick(frame_tick), .pix_valid(sk_valid),
+        .pix_x(sk_x), .pix_y(sk_y),
+        .pix_r(sk_r), .pix_g(sk_g), .pix_b(sk_b), .skin(sk_skin),
         .arm(wr && is_reg && reg_ix == 5'h11 && pwdata_i[0]),
         .pop(sel && penable_i && !pwrite_i && is_reg && reg_ix == 5'h12),
         .done(thumb_done), .pixel(thumb_pixel)
@@ -245,6 +298,9 @@ module rppg_top (
             bar_len <= 0; bar_color <= 0;
             digit_color <= 16'hFFFF; wave_color <= 16'hFFE0;
             red_const_o <= 10'h80; green_const_o <= 10'h80; blue_const_o <= 10'h80;
+            // Chai and Ngan's skin box; the firmware sets its own.
+            cb_min <= 77; cb_max <= 127; cr_min <= 133; cr_max <= 173;
+            y_min <= 40; y_max <= 235; mask_en <= 1;
         end else if (wr && is_reg) begin
             case (reg_ix)
                 5'h07: begin roi_x0 <= pwdata_i[XW-1:0]; roi_x1 <= pwdata_i[16+XW-1:16]; end
@@ -256,6 +312,10 @@ module rppg_top (
                 5'h0F: begin red_const_o <= pwdata_i[9:0]; green_const_o <= pwdata_i[19:10];
                             blue_const_o <= pwdata_i[29:20]; end
                 5'h10: begin digit_color <= pwdata_i[15:0]; wave_color <= pwdata_i[31:16]; end
+                5'h13: begin cb_min <= pwdata_i[7:0];   cb_max <= pwdata_i[15:8];
+                            cr_min <= pwdata_i[23:16]; cr_max <= pwdata_i[31:24]; end
+                5'h14: begin y_min <= pwdata_i[7:0]; y_max <= pwdata_i[15:8];
+                            mask_en <= pwdata_i[16]; end
                 default: ;
             endcase
         end
@@ -284,7 +344,16 @@ module rppg_top (
                 5'h10: prdata_o = {wave_color, digit_color};
                 5'h11: prdata_o = {31'b0, thumb_done};
                 5'h12: prdata_o = {16'b0, thumb_pixel};
+                5'h13: prdata_o = {cr_max, cr_min, cb_max, cb_min};
+                5'h14: prdata_o = {15'b0, mask_en, y_max, y_min};
                 default: ;
+            endcase
+        end else if (sel && is_cell) begin
+            case (paddr_i[3:2])
+                2'd0: prdata_o = {8'b0, cell_r};
+                2'd1: prdata_o = {8'b0, cell_g};
+                2'd2: prdata_o = {8'b0, cell_b};
+                2'd3: prdata_o = {16'b0, cell_n};
             endcase
         end
     end

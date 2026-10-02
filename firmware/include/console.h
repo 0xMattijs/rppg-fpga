@@ -9,6 +9,11 @@
  *   color <digit> <wave>     digit and waveform colors, RGB565 in hex
  *   roi <x0> <y0> <x1> <y1>  move the ROI, in camera pixels (x1, y1 exclusive)
  *   preview <0|1>            camera preview for the PC off or on (preview.h)
+ *   grid <0|1>               GRID lines with the ROI grid's cells off or on
+ *                            (grid.h)
+ *   skin <y_min> <y_max> <cb_min> <cb_max> <cr_min> <cr_max>
+ *                            skin limits, decimal, 0..255 (config.h SKIN_*)
+ *   mask <0|1>               grid sums every pixel, or skin pixels only
  *   calibrate                recalibrate the camera to the light, as SW3 does;
  *                            the board reports "# calibrated, ..." when locked
  *   restart                  restart the estimates at the next frame, which

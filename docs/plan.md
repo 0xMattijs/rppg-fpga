@@ -40,6 +40,15 @@ restarts the estimates and reports the first frame of the new run as
 `# restart <frame>`; `capture.py` sends `restart` and records from that
 frame on.
 
+While the PC asks for them (`grid 1`, Phase 6), the board also sends the
+skin-masked sums of the ROI's 4 × 4 grid, one line per frame;
+`firmware/include/grid.h` has the format. `capture.py` decodes them into a
+`.grid` CSV.
+
+```
+GRID <frame_counter> <base64>
+```
+
 `capture.py` adds one field to each EST line in the `.est` file: the PC's
 clock in Unix seconds at the end of the estimate's window. `rppg.validate`
 matches that against the reference heart rate (Phase 5).
@@ -51,3 +60,9 @@ matches that against the reference heart rate (Phase 5).
   [camera-bus.md](camera-bus.md).
 - How far the Apple Watch's heart rate lags the true one. `rppg.validate`
   prints the error at each lag from 0 to 15 s.
+- How well it works across skin tones. rPPG gets a weaker signal from darker
+  skin, since melanin absorbs more of the light, and published comparisons
+  show worse accuracy for Fitzpatrick types V–VI. All recordings so far are
+  of one person. The skin mask fits itself to each person at calibration
+  rather than using a fixed box, but only recordings of several people,
+  with results reported per person, can show how well it works.

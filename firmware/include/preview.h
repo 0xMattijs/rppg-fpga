@@ -6,7 +6,8 @@
  * a few rows per frame, as lines that capture.py ignores:
  *
  *   IMG roi <x0> <y0> <x1> <y1>   before each image: the ROI, camera pixels
- *   IMG <row> <base64>            row 0..59: 80 pixels, RGB565, high byte first
+ *   IMG <row> <base64>            row 0..59: 80 pixels, RGB565, high byte first;
+ *                                 bit 0 is the skin mask instead of blue's lowest
  */
 
 void preview_set(int on);

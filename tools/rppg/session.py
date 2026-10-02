@@ -7,7 +7,8 @@ The steps:
 
 1. Opens the camera preview. Check that your forehead is inside the green
    box, with the lamp on and you in the recording position.
-2. C calibrates the camera to the light (like SW3).
+2. C calibrates the camera to the light (like SW3) and fits the skin mask
+   to your face.
 3. R records for --minutes, with the preview on. Q, closing the window, or
    Ctrl+C stops early.
 4. Waits for a new Health export (a .zip) in ~/Downloads, then runs
@@ -17,7 +18,7 @@ Press the keys in the preview window, or type them in the terminal followed
 by Enter. Ctrl+C while waiting for the export skips the comparison and
 prints the commands to run it later.
 
-Everything goes to data/<name>.*: .csv and .est from capture.py, _frame.png
+Everything goes to data/<name>.*: .csv, .est, and .grid from capture.py, _frame.png
 (the framing at the start), .png (validate's plots), and .log (the board's
 messages and both reports).
 """
@@ -72,7 +73,8 @@ def record(args, base, logfile):
                             saved = True
                     elif line.startswith("#"):
                         log(line, logfile)
-                        if line.startswith("# calibrated") and state == "calibrating":
+                        # The skin fit follows the camera's lock.
+                        if line.startswith("# skin") and state == "calibrating":
                             state = "ready"
                             win.set_status("Calibrated. R: record "
                                            f"{args.minutes:g} min   C: again   Q: quit")
@@ -90,7 +92,7 @@ def record(args, base, logfile):
                 if "r" in keys and state == "ready":
                     state = "recording"
                     rec = Recorder(base.with_suffix(".csv"), logfile)
-                    send(ser, "restart")
+                    send(ser, "grid 1", "restart")
                     t0 = time.time()
                 if state == "recording":
                     left = args.minutes * 60 - (time.time() - t0)
@@ -103,7 +105,7 @@ def record(args, base, logfile):
         except KeyboardInterrupt:
             why = "Ctrl+C was pressed"
         finally:
-            send(ser, "preview 0")
+            send(ser, "preview 0", "grid 0")
             log(f"Stopped {state}: {why}.", logfile)
             if rec:
                 rec.close()

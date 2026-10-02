@@ -4,8 +4,10 @@
     python -m rppg.preview --save p.png   # also write each image to a file
 
 The firmware sends the thumbnail as IMG lines while the preview is on
-(firmware/include/preview.h). This script turns it on, draws the ROI and the
-latest estimate, and turns it off again when the window closes or on Ctrl+C.
+(firmware/include/preview.h). This script turns it on, draws the ROI with
+its 4 x 4 grid and the latest estimate, and turns it off again when the
+window closes or on Ctrl+C. The title shows how much of the ROI the skin
+mask keeps; M dims the pixels it drops.
 It needs the serial port to itself, so stop capture.py first; capture.py
 --preview and session.py show the same window while they record.
 """
@@ -21,9 +23,12 @@ W, H, SCALE = 80, 60, 8      # thumbnail size; one pixel per 8 x 8 block
 
 
 def rgb565(raw):
+    """(RGB image, skin mask) from a thumbnail row: RGB565 with the skin
+    mask in bit 0."""
     p = np.frombuffer(raw, dtype=">u2").astype(np.uint32)
-    r, g, b = p >> 11 & 31, p >> 5 & 63, p & 31
-    return np.stack([r * 255 // 31, g * 255 // 63, b * 255 // 31], -1).astype(np.uint8)
+    r, g, b = p >> 11 & 31, p >> 5 & 63, p & 30
+    rgb = np.stack([r * 255 // 31, g * 255 // 63, b * 255 // 31], -1).astype(np.uint8)
+    return rgb, (p & 1).astype(bool)
 
 
 class Preview:
@@ -43,6 +48,8 @@ class Preview:
         self.mirror = mirror
         self.save = save
         self.img = np.zeros((H, W, 3), np.uint8)
+        self.skin = np.zeros((H, W), bool)
+        self.show_mask = False
         self.rows_seen = set()
         self.roi = None
         self.est = ""
@@ -56,15 +63,25 @@ class Preview:
                                interpolation="nearest")
         self.box = Rectangle((0, 0), 0, 0, fill=False, ec="lime", lw=2)
         ax.add_patch(self.box)
+        self.grid_lines = [ax.plot([], [], color="lime", lw=0.6, alpha=0.7)[0]
+                           for _ in range(6)]
         ax.set_axis_off()
         self.title = ax.set_title("waiting for the board...")
         self.footer = self.fig.text(0.5, 0.02, "", ha="center", fontsize=12)
-        self.fig.canvas.mpl_connect("key_press_event", lambda e: self.keys.append(e.key))
+        self.fig.canvas.mpl_connect("key_press_event", self.on_key)
         self.fig.tight_layout(rect=(0, 0.05, 1, 1))
         plt.show(block=False)
         # Don't pull the window to the front on every redraw, so the
         # terminal keeps the keyboard if the user goes back to it.
         matplotlib.rcParams["figure.raise_window"] = False
+
+    def on_key(self, e):
+        if e.key == "m":
+            self.show_mask = not self.show_mask
+            if self.frames:
+                self.draw()
+        else:
+            self.keys.append(e.key)
 
     def alive(self):
         return self.plt.fignum_exists(self.fig.number)
@@ -89,24 +106,49 @@ class Preview:
             except ValueError:
                 return                # a byte lost on the way
             if row < H and len(data) == 2 * W:
-                self.img[row] = rgb565(data)
+                self.img[row], self.skin[row] = rgb565(data)
                 self.rows_seen.add(row)
             if row == H - 1:
                 self.show_image()
         elif line.startswith("EST ") and len(f) == 6:
             self.est = f"{float(f[3]):.0f} bpm, quality {float(f[4]):.2f}"
 
-    def show_image(self):
-        self.frames += 1
-        self.shown.set_data(self.img[:, ::-1] if self.mirror else self.img)
+    def skin_share(self):
+        """Fraction of the thumbnail's pixels inside the ROI that are skin."""
+        if not self.roi:
+            return None
+        x0, y0, x1, y1 = (v // SCALE for v in self.roi)
+        inside = self.skin[y0:y1, x0:x1]
+        return inside.mean() if inside.size else None
+
+    def draw(self):
+        img = self.img
+        if self.show_mask:
+            img = np.where(self.skin[..., None], img, img // 4)
+        self.shown.set_data(img[:, ::-1] if self.mirror else img)
         if self.roi:
             x0, y0, x1, y1 = self.roi
+            # The fabric's cell edges (grid_accumulator.v)
+            w, h = x1 - x0, y1 - y0
+            xs = [x0 + w // 4, x0 + w // 2, x0 + w // 2 + w // 4]
+            ys = [y0 + h // 4, y0 + h // 2, y0 + h // 2 + h // 4]
             if self.mirror:
                 x0, x1 = W * SCALE - x1, W * SCALE - x0
+                xs = [W * SCALE - x for x in xs]
             self.box.set_bounds(x0, y0, x1 - x0, y1 - y0)
+            for line, x in zip(self.grid_lines[:3], xs):
+                line.set_data([x, x], [y0, y1])
+            for line, y in zip(self.grid_lines[3:], ys):
+                line.set_data([x0, x1], [y, y])
+
+    def show_image(self):
+        self.frames += 1
+        self.draw()
         missing = H - len(self.rows_seen)
+        share = self.skin_share()
         self.title.set_text(f"image {self.frames}"
                             + (f", {missing} rows missing" if missing else "")
+                            + (f", skin {share:.0%} of the box" if share is not None else "")
                             + (f"   {self.est}" if self.est else ""))
         self.rows_seen.clear()
         if self.save:

@@ -1,6 +1,7 @@
 /* Camera preview for the PC; see include/preview.h. */
 #include <stdint.h>
 #include "config.h"
+#include "grid.h"
 #include "preview.h"
 #include "uart.h"
 
@@ -17,27 +18,12 @@
 
 /* Two rows (2 x 226 bytes) per frame keep the UART at about 14 kB/s of its
  * 23 kB/s, so an image every second, and block the main loop for about
- * 20 ms a frame. */
+ * 20 ms a frame. GRID lines take another 7 kB/s, so with them on, one row:
+ * an image every 2 s. */
 #define ROWS_PER_FRAME 2
 
 static volatile uint32_t *const regs = (volatile uint32_t *)ROI_ACC_BASE;
 static int on, row = -1;        /* row < 0: waiting for a capture */
-
-static const char b64[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-static void put_base64(const uint8_t *p, int n)
-{
-    for (int i = 0; i < n; i += 3) {
-        uint32_t v = (uint32_t)p[i] << 16;
-        if (i + 1 < n) v |= (uint32_t)p[i + 1] << 8;
-        if (i + 2 < n) v |= p[i + 2];
-        uart_putc(b64[v >> 18 & 63]);
-        uart_putc(b64[v >> 12 & 63]);
-        uart_putc(i + 1 < n ? b64[v >> 6 & 63] : '=');
-        uart_putc(i + 2 < n ? b64[v & 63] : '=');
-    }
-}
 
 static void arm(void)
 {
@@ -68,7 +54,8 @@ void preview_poll(void)
         uart_puts("\r\n");
         row = 0;
     }
-    for (int n = 0; n < ROWS_PER_FRAME && row < THUMB_H; n++, row++) {
+    int rows = grid_streaming() ? 1 : ROWS_PER_FRAME;
+    for (int n = 0; n < rows && row < THUMB_H; n++, row++) {
         uint8_t buf[2 * THUMB_W];
         for (int x = 0; x < THUMB_W; x++) {
             uint32_t p = regs[REG_THUMB_DATA];
@@ -78,7 +65,7 @@ void preview_poll(void)
         uart_puts("IMG ");
         uart_putu(row);
         uart_putc(' ');
-        put_base64(buf, sizeof buf);
+        uart_putbase64(buf, sizeof buf);
         uart_puts("\r\n");
     }
     if (row >= THUMB_H)

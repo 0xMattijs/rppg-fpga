@@ -73,7 +73,7 @@ python -m rppg.check_board ../data/session.csv
 # in the ROI; close the window before capturing
 python -m rppg.preview
 
-# Send console commands: color test pattern, ROI, raw LCD commands
+# Send console commands: color test pattern, ROI, skin limits, raw LCD commands
 python -m rppg.send "test 1" "roi 240 180 400 300"
 
 # Check a recording: frame rate, dropped frames, band-passed green channel
@@ -96,4 +96,8 @@ python -m rppg.validate ../data/session.est --watch export.zip --plot session.pn
 # then wait for the Health export in ~/Downloads and compare; files go to
 # ../data/talking.*
 python -m rppg.session talking --minutes 5
+
+# Compare the whole ROI, the skin mask, and the 4 x 4 grid on one recording,
+# against the watch (Phase 6)
+python -m rppg.grid_eval ../data/talking.csv --watch export.zip
 ```

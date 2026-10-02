@@ -1,8 +1,11 @@
 // Testbench for rppg_top: a small camera frame through the whole block.
 // Run with:
 //   iverilog -o tb hdl/sim/tb_rppg_top.v hdl/src/rppg_top.v hdl/src/cam_bus.v \
-//     hdl/src/roi_accumulator.v hdl/src/uart_tx.v hdl/src/uart_rx.v \
-//     hdl/src/overlay.v hdl/src/thumb.v && vvp tb
+//     hdl/src/roi_accumulator.v hdl/src/skin_mask.v hdl/src/grid_accumulator.v \
+//     hdl/src/uart_tx.v hdl/src/uart_rx.v hdl/src/overlay.v hdl/src/thumb.v && vvp tb
+//
+// The grid sums every pixel here (mask off), so its cells must add up to
+// the ROI sums; tb_grid_accumulator.v checks the mask and the cell edges.
 //
 // The overlay is on, and its darkened panel starts at (8, 8), which covers
 // part of the ROI border. tb_overlay.v checks the rest of its layout.
@@ -44,6 +47,19 @@ module tb_rppg_top;
     // Pixel (x, y) is R = x, G = y, B = x + y, in RGB565 fields.
     function [15:0] pixel(input integer x, input integer y);
         pixel = {x[4:0], y[5:0], x[4:0] + y[4:0]};
+    endfunction
+
+    // skin_mask.v with the reset limits, for the thumbnail's bit 0.
+    function is_skin(input [15:0] p);
+        integer r, g, b, luma, cb, cr;
+        begin
+            r = {p[15:11], 3'b0}; g = {p[10:5], 2'b0}; b = {p[4:0], 3'b0};
+            luma = (77 * r + 150 * g + 29 * b) >> 8;
+            cb = (32768 - 43 * r - 85 * g + 128 * b) >> 8;
+            cr = (32768 + 128 * r - 107 * g - 21 * b) >> 8;
+            is_skin = luma >= 40 && luma <= 235 && cb >= 77 && cb <= 127 &&
+                      cr >= 133 && cr <= 173;
+        end
     endfunction
 
     // overlay.v's darkening: each channel halved.
@@ -151,6 +167,7 @@ module tb_rppg_top;
     endtask
 
     integer x, y, exp_r, exp_g, exp_b, exp_n;
+    integer c, cr_, cg_, cb_, cn_, tot_n = 0, skin_seen = 0;
     reg [15:0] p, got;
     reg in_roi, in_box;
 
@@ -186,6 +203,12 @@ module tb_rppg_top;
         @(posedge clk) check(lcd_psel === 1'b0, "apb3_if not selected at 0x1000");
         psel <= 0;
 
+        // Skin limits: reset values, then the grid sums every pixel.
+        apb_read(32'h3000104C); check(rd == {8'd173, 8'd133, 8'd127, 8'd77}, "SKIN_C reset");
+        apb_read(32'h30001050); check(rd == {16'h1, 8'd235, 8'd40}, "SKIN_Y reset");
+        apb_write(32'h30001050, {16'h0, 8'd235, 8'd40});
+        apb_read(32'h30001050); check(rd == {16'h0, 8'd235, 8'd40}, "SKIN_Y write");
+
         apb_write(32'h30001044, 1);      // thumbnail of the next whole frame
         apb_read(32'h30001044); check(rd == 0, "THUMB_CTRL not ready when armed");
         send_frame;   // the ROI takes effect at this frame's VSYNC
@@ -199,11 +222,13 @@ module tb_rppg_top;
         for (y = 0; y < H / 8; y = y + 1)
             for (x = 0; x < 80; x = x + 1) begin
                 apb_read(32'h30001048);
-                if (x < W / 8 && rd[15:0] !== pixel(8 * x + 4, 8 * y + 4)) begin
+                p = {pixel(8 * x + 4, 8 * y + 4) >> 1, is_skin(pixel(8 * x + 4, 8 * y + 4))};
+                if (x < W / 8 && rd[15:0] !== p) begin
                     $display("FAIL: thumbnail (%0d,%0d) = %h, expected %h",
-                             x, y, rd[15:0], pixel(8 * x + 4, 8 * y + 4));
+                             x, y, rd[15:0], p);
                     errors = errors + 1;
                 end
+                if (x < W / 8 && p[0]) skin_seen = skin_seen + 1;
             end
 
         exp_r = 0; exp_g = 0; exp_b = 0; exp_n = 0;
@@ -222,6 +247,29 @@ module tb_rppg_top;
         apb_read(32'h30001010); check(rd == 3, "FRAME");
         apb_read(32'h30001018); check(rd == ((W << 16) | H), "GEOMETRY");
         apb_read(32'h30001014); check(rd > 0, "TIMESTAMP");
+        check(skin_seen > 0 && skin_seen < (W / 8) * (H / 8), "thumbnail has skin and not");
+
+        // Grid cells. The ROI is 6 x 4, so the column edges are at
+        // x0 + 1, + 3, + 4 and the row edges at y0 + 1, 2, 3.
+        for (c = 0; c < 16; c = c + 1) begin
+            cr_ = 0; cg_ = 0; cb_ = 0; cn_ = 0;
+            for (y = Y0; y < Y1; y = y + 1)
+                for (x = X0; x < X1; x = x + 1)
+                    if ((x >= X0 + 4 ? 3 : x >= X0 + 3 ? 2 : x >= X0 + 1 ? 1 : 0) == c % 4 &&
+                        y - Y0 == c / 4) begin
+                        p = pixel(x, y);
+                        cr_ = cr_ + {p[15:11], 3'b0};
+                        cg_ = cg_ + {p[10:5], 2'b0};
+                        cb_ = cb_ + {p[4:0], 3'b0};
+                        cn_ = cn_ + 1;
+                    end
+            apb_read(32'h30001200 + 16 * c);  check(rd == cr_, "cell red");
+            apb_read(32'h30001204 + 16 * c);  check(rd == cg_, "cell green");
+            apb_read(32'h30001208 + 16 * c);  check(rd == cb_, "cell blue");
+            apb_read(32'h3000120C + 16 * c);  check(rd == cn_, "cell count");
+            tot_n = tot_n + rd;
+        end
+        check(tot_n == exp_n, "cells add up to COUNT");
 
         // The LCD path sees the image, with a green border around the ROI.
         for (y = 0; y < H; y = y + 1)

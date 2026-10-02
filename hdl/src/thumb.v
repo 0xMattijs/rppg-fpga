@@ -1,5 +1,6 @@
 // Thumbnail for the PC preview (Phase 5): one whole frame, shrunk to 80 x 60
-// by taking the pixel at (4, 4) of every 8 x 8 block, in RGB565.
+// by taking the pixel at (4, 4) of every 8 x 8 block, in RGB565. The lowest
+// bit of blue is the skin mask instead (skin_mask.v, Phase 6).
 //
 // arm starts a capture: the thumbnail fills during the next whole frame
 // (from one frame_tick to the next), then done rises and the pixels can be
@@ -20,6 +21,7 @@ module thumb #(
     input  wire [7:0]    pix_r,       // 5 bits, padded
     input  wire [7:0]    pix_g,       // 6 bits, padded
     input  wire [7:0]    pix_b,       // 5 bits, padded
+    input  wire          skin,
 
     input  wire          arm,
     input  wire          pop,
@@ -44,7 +46,7 @@ module thumb #(
 
     always @(posedge clk) begin
         if (take)
-            mem[waddr] <= {pix_r[7:3], pix_g[7:2], pix_b[7:3]};
+            mem[waddr] <= {pix_r[7:3], pix_g[7:2], pix_b[7:4], skin};
         pixel <= mem[raddr];
     end
 

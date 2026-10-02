@@ -3,6 +3,7 @@
 #include "system_m2sxxx.h"
 #include "config.h"
 #include "console.h"
+#include "grid.h"
 #include "rppg.h"
 #include "uart.h"
 #include "ui.h"
@@ -89,11 +90,13 @@ void SysTick_Handler(void)
     f.sum_b = roi[REG_SUM_B];
     f.count = roi[REG_COUNT];
     f.timestamp_us = roi[REG_TIMESTAMP];
+    grid_read();
     /* A new frame landed mid-read: try again on the next tick. */
     if (roi[REG_FRAME] != frame)
         return;
     f.frame = frame;
     last_seen_frame = frame;
+    grid_commit(frame);
 
     /* Here rather than in the main loop, which an estimate blocks for a
      * fifth of a second. */
@@ -166,7 +169,8 @@ void app_restart(void)
 /* Light calibration (SW3, console "calibrate"): the camera's automatic
  * exposure, gain, and white balance run for CAL_SETTLE_MS on the scene in
  * front of it, then lock again, as at power-up (ov7725.c). Frames in
- * between are not used. */
+ * between are not used. Then the skin limits are fitted to the person in
+ * the ROI (grid.h). */
 #define COM8_AUTO   0x0F    /* AEC, AWB, AGC on (the reference's setting) */
 #define COM8_LOCKED 0x08    /* all three off: the sensor keeps the last values */
 static int calibrating;
@@ -206,6 +210,7 @@ static void poll_calibration(void)
     }
     WriteReg(OV7725_COM8, COM8_LOCKED);
     calibrating = 0;
+    grid_fit();
     /* The frame in progress may have been exposed before the lock. */
     roi_valid_from = roi[REG_FRAME] + 2;
 #if ENABLE_DSP
@@ -287,6 +292,7 @@ int main(void)
     SYSREG->CC_CR = cc_cr_boot | 1u;    /* CC_CACHE_ENB */
 
     ui_init();
+    grid_init();
     last_seen_frame = roi[REG_FRAME];
     SysTick_Config(SystemCoreClock / 1000);
 
@@ -361,6 +367,7 @@ int main(void)
             uart_puts("\r\n");
             preview_poll();
         }
+        grid_frame(f.frame);
 
 #if ENABLE_DSP
         if (f.count == 0 || calibrating || (int32_t)(f.frame - roi_valid_from) < 0)

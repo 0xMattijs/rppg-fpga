@@ -63,7 +63,7 @@ and SW1 (silkscreen PB3_DEBUG, FF_SW2, PB1_DEBUG).
 |--------|--------|
 | SW1 (right) | Move the ROI to the next of nine positions, a 3 × 3 grid starting in the middle |
 | SW2 (middle) | Change the ROI size: 160 × 120, 240 × 180, 96 × 72 (camera pixels) |
-| SW3 (left) | Recalibrate the camera to the light: exposure, gain, and white balance adjust while the digits count down 3, 2, 1, then lock |
+| SW3 (left) | Recalibrate the camera to the light: exposure, gain, and white balance adjust while the digits count down 3, 2, 1, then lock; then fit the skin mask to the face in the ROI |
 
 Moving the ROI or recalibrating restarts the estimates, so the display
 shows `---` for 10 s (13 s after SW3). Don't press the buttons while
@@ -89,6 +89,22 @@ fabric's `thumb.v`), which `python -m rppg.preview` shows; `capture.py`
 turns it off unless it runs with `--preview`. With the preview on, a
 recording keeps every frame and its estimates still match the PC's
 (`check_board`), and estimates still take 193 ms.
+
+## Skin mask and ROI grid (Phase 6)
+
+The fabric splits the ROI into a 4 × 4 grid and sums only the skin pixels
+in each cell (`include/grid.h`). The DSP still uses the whole ROI, every
+pixel, so the board's estimates haven't changed; `grid 1` streams the cells
+to the PC, and `capture.py` keeps them in a `.grid` file next to the CSV.
+That way one recording holds both the old input and the new one.
+
+The skin mask is a box in YCbCr. A fixed box suits some skin tones better
+than others, so each calibration (SW3 or `calibrate`) fits it to the person
+in the ROI: it centers the Cb and Cr limits on the mean color of the
+middle four cells, and puts the Y floor at 40% of their brightness. The
+board reports the result as `# skin ...`. `skin` sets the limits by hand,
+and `mask 0` makes the grid sum every pixel. In `rppg.preview`, the title
+shows how much of the ROI the mask keeps, and M dims the pixels it drops.
 
 ## Checking the DSP on the board
 

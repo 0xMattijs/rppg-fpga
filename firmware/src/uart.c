@@ -72,3 +72,19 @@ int uart_getc(void)
     uint32_t r = regs[REG_UART_RX];     /* reading a valid byte removes it */
     return (r & RX_VALID) ? (int)(r & 0xFF) : -1;
 }
+
+static const char b64[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+void uart_putbase64(const uint8_t *p, int n)
+{
+    for (int i = 0; i < n; i += 3) {
+        uint32_t v = (uint32_t)p[i] << 16;
+        if (i + 1 < n) v |= (uint32_t)p[i + 1] << 8;
+        if (i + 2 < n) v |= p[i + 2];
+        uart_putc(b64[v >> 18 & 63]);
+        uart_putc(b64[v >> 12 & 63]);
+        uart_putc(i + 1 < n ? b64[v >> 6 & 63] : '=');
+        uart_putc(i + 2 < n ? b64[v & 63] : '=');
+    }
+}

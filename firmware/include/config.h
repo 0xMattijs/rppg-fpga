@@ -25,6 +25,24 @@
  * seconds. Power-up waits 2 s (ov7725.c). */
 #define CAL_SETTLE_MS      3000
 
+/* Skin mask (Phase 6, hdl/src/skin_mask.v), in full-range YCbCr, limits
+ * inclusive. Until a calibration fits them to the person in the ROI: Chai
+ * and Ngan's chroma box, with a low Y floor so dark skin in dim light
+ * stays in. Try others live with "skin" (rppg.send). */
+#define SKIN_Y_MIN         16
+#define SKIN_Y_MAX         240   /* also after a fit: drops clipped highlights */
+#define SKIN_CB_MIN        77
+#define SKIN_CB_MAX        127
+#define SKIN_CR_MIN        133
+#define SKIN_CR_MAX        173
+#define SKIN_MASK          1     /* 0: the grid sums every pixel */
+/* The fit (grid.h): frames to average, Cb and Cr limits at the mean plus or
+ * minus SKIN_FIT_CHROMA, and the Y floor as a fraction of the mean Y. First
+ * guesses; RGB565 alone moves Cb and Cr in steps of about 4. */
+#define SKIN_FIT_FRAMES    15
+#define SKIN_FIT_CHROMA    20
+#define SKIN_FIT_Y_FLOOR   0.4f
+
 /* Display overlay (Phase 4, firmware/src/ui/ui.c) */
 #define UI_MIRROR          1     /* 1 if the LCD shows the camera image mirrored;
                                     flips the overlay so the digits read right */

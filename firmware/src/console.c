@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "config.h"
 #include "console.h"
+#include "grid.h"
 #include "ili9488.h"
 #include "preview.h"
 #include "uart.h"
@@ -146,6 +147,33 @@ static void run(const char *cmd)
             return;
         }
         preview_set(v[0]);
+    } else if (starts_with(cmd, "grid")) {
+        p = cmd + 4;
+        if (next_num(&p, 10, &v[0]) != 0 || v[0] > 1) {
+            reply("error", "grid <0|1>");
+            return;
+        }
+        grid_stream(v[0]);
+    } else if (starts_with(cmd, "mask")) {
+        p = cmd + 4;
+        if (next_num(&p, 10, &v[0]) != 0 || v[0] > 1) {
+            reply("error", "mask <0|1>");
+            return;
+        }
+        grid_set_mask(v[0]);
+    } else if (starts_with(cmd, "skin")) {
+        p = cmd + 4;
+        for (n = 0; n < 6; n++)
+            if (next_num(&p, 10, &v[n]) != 0 || v[n] > 255)
+                break;
+        if (n < 6) {
+            reply("error", "skin <y_min> <y_max> <cb_min> <cb_max> <cr_min> <cr_max>, 0..255");
+            return;
+        }
+        uint8_t lim[6];
+        for (int i = 0; i < 6; i++)
+            lim[i] = (uint8_t)v[i];
+        grid_set_skin(lim);
     } else if (starts_with(cmd, "calibrate")) {
         app_calibrate();
     } else if (starts_with(cmd, "restart")) {
