@@ -32,7 +32,7 @@ camera ──► fabric: ROI / skin mask / RGB accumulators ──► per-frame 
 
 See [docs/plan.md](docs/plan.md) for the seven-phase build plan.
 
-- [ ] Phase 1: Reference design
+- [x] Phase 1: Reference design
 - [ ] Phase 2: ROI accumulator in fabric
 - [ ] Phase 3: Signal processing on the Cortex-M3
 - [ ] Phase 4: Touch UI

@@ -169,6 +169,11 @@ void OV7725_init()
 	WriteReg(0xAB, 0x06);	// Sign bit for Hue and brightness	Default - 06
 	WriteReg(0xAC, 0xFF);	// DSP auto function ON/OFF			Default - FF
 
+	// rPPG needs a camera that does not adapt: auto exposure, gain, and white
+	// balance would cancel the pulse's slow brightness change. Let them settle
+	// on the scene first, then turn them off; the sensor keeps the last values.
+	delay_us(2000000);
+	WriteReg(OV7725_COM8, 0x08);	// was 0x0F: AEC (bit 0), AWB (bit 1), AGC (bit 2) off
 
     }
 
