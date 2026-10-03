@@ -59,7 +59,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 # Program the board through its on-board PIC (no FlashPro needed)
-python -m rppg.program program ../libero/build/export/rppg.dat
+hellofpga-prog program ../libero/build/export/rppg.dat
 
 # Record per-frame sums and the board's BPM estimates (through the same PIC,
 # /dev/ttyACM0); the estimates go to ../data/session.est. --preview shows

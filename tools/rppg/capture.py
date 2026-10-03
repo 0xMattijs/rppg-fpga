@@ -10,7 +10,7 @@ PIC32 relays to the FPGA: the firmware stays quiet until it sees a byte from
 the PC. The board restarts its estimates at the next frame and reports that
 frame ("# restart <frame>"); the recording starts there, so rppg.check_board
 can repeat the estimates from it. Leave relay mode with
-'%Ex'; program.py does that itself.
+'%Ex'; hellofpga-prog does that itself.
 
 The board's own BPM estimates (EST lines) go to a second file next to the
 CSV, with the extension .est; rppg.check_board compares them with the PC.

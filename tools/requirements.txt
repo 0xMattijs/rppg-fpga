@@ -2,3 +2,4 @@ numpy
 scipy
 matplotlib
 pyserial
+hellofpga-prog @ git+ssh://git@github.com/0xMattijs/hellofpga-prog

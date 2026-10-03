@@ -11,7 +11,7 @@
 # <build_dir>        Where the converted project goes. Default: libero/build,
 #                    which Git ignores. Wiped and recreated on every run.
 #
-# Output: <build_dir>/export/rppg.dat (DirectC, for tools/rppg/program.py)
+# Output: <build_dir>/export/rppg.dat (DirectC, for hellofpga-prog)
 # and rppg.stp (STAPL, for FlashPro). Both program fabric and eNVM.
 
 set script_dir [file dirname [file normalize [info script]]]
