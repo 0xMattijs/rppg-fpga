@@ -51,6 +51,11 @@ writes `libero/build/export/rppg.dat` (DirectC) and `rppg.stp` (STAPL).
 Both program fabric and eNVM. Each run wipes `libero/build/` first. A build
 takes about 2.5 minutes.
 
+It also writes `rppg_fabric.dat`, which programs only the fabric and leaves
+the eNVM as it is. Use it to put the design back after something replaced
+only the fabric, such as hellofpga-prog's eNVM dumper. The full `rppg.dat`
+would also overwrite the firmware with whatever build it was made from.
+
 ## Changes to the reference design
 
 `rppg_top.tcl` edits the TOP SmartDesign:

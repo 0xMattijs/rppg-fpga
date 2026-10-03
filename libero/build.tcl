@@ -13,6 +13,7 @@
 #
 # Output: <build_dir>/export/rppg.dat (DirectC, for hellofpga-prog)
 # and rppg.stp (STAPL, for FlashPro). Both program fabric and eNVM.
+# Also rppg_fabric.dat, which programs the fabric only.
 
 set script_dir [file dirname [file normalize [info script]]]
 set repo_dir [file dirname $script_dir]
@@ -106,6 +107,13 @@ export_bitstream_file -file_name {rppg} -export_dir $export_dir \
     -format {DAT STP} \
     -trusted_facility_file 1 \
     -trusted_facility_file_components {FABRIC ENVM}
+
+# Fabric only: puts the design back without touching the eNVM, such as after
+# hellofpga-prog's eNVM dumper replaced the fabric.
+export_bitstream_file -file_name {rppg_fabric} -export_dir $export_dir \
+    -format {DAT} \
+    -trusted_facility_file 1 \
+    -trusted_facility_file_components {FABRIC}
 
 save_project
 close_project
