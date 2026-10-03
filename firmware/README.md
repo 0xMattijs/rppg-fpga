@@ -10,6 +10,7 @@ project (see `sf2.mk` and `../libero/README.md`). The output,
 | `src/main.c` | Frame polling, ring buffer, buttons, DSP and UI calls | 2–4 |
 | `src/uart.c` | UART to and from the PC through the PIC32 | 2, 4 |
 | `src/console.c` | Text commands from the PC: LCD commands, test pattern, ROI | 4 |
+| `src/dump.c` | eNVM read-back for `tools/rppg/envm_dump.py` | – |
 | `src/drivers/ov7725.c` | Camera set-up; locks exposure and white balance | 1 |
 | `src/dsp/rppg.c` | Normalization, POS, band-pass, FFT, peak pick | 3 |
 | `src/ui/ui.c` | BPM digits, waveform, and quality bar on the LCD | 4 |

@@ -7,7 +7,7 @@
 
 NAME := rppg
 OUT  := build/rppg
-APP_SRCS = src/main.c src/uart.c src/console.c src/preview.c src/grid.c src/dsp/rppg.c \
+APP_SRCS = src/main.c src/uart.c src/console.c src/dump.c src/preview.c src/grid.c src/dsp/rppg.c \
            src/ui/ui.c
 include sf2.mk
 

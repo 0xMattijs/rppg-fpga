@@ -18,6 +18,9 @@
  *                            the board reports "# calibrated, ..." when locked
  *   restart                  restart the estimates at the next frame, which
  *                            the board reports as "# restart <frame>"
+ *   dump [<offset> <length>] send eNVM bytes as ENVM lines (dump.h), all
+ *                            256 KB by default; offset and length in hex.
+ *                            The estimates restart afterwards.
  *
  * Each command answers with a "# ok" or "# error" comment line. */
 

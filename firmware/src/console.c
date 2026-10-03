@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include "config.h"
 #include "console.h"
+#include "dump.h"
 #include "grid.h"
 #include "ili9488.h"
 #include "preview.h"
@@ -177,6 +178,22 @@ static void run(const char *cmd)
     } else if (starts_with(cmd, "calibrate")) {
         app_calibrate();
     } else if (starts_with(cmd, "restart")) {
+        app_restart();
+    } else if (starts_with(cmd, "dump")) {
+        p = cmd + 4;
+        while (n < 2 && next_num(&p, 16, &v[n]) == 0)
+            n++;
+        while (is_space(*p))
+            p++;
+        if (n == 0) {
+            v[0] = 0;
+            v[1] = ENVM_SIZE;
+        }
+        if (n == 1 || *p || dump_envm(v[0], v[1]) != 0) {
+            reply("error", "dump [<offset> <length>], in hex, inside the 256 KB eNVM");
+            return;
+        }
+        /* The main loop stood still for the dump, so frames were lost. */
         app_restart();
     } else if (starts_with(cmd, "roi")) {
         p = cmd + 3;
