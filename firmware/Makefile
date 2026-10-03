@@ -1,6 +1,6 @@
 # Build the rPPG firmware for the Cortex-M3.
 #
-#   make REF=<path to HF10_OV7725_LCD_FF>
+#   make [REF=<path to HF10_OV7725_LCD_FF>]    (default: ../libero/build)
 #
 # Writes build/rppg.hex; pass it to libero/build.tcl to load it into eNVM.
 # See sf2.mk for what comes from the reference project.

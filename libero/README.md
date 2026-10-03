@@ -12,20 +12,38 @@ Keep generated Libero output out of Git. Commit only:
 The build starts from Microchip's Hello FPGA video demo, `HF10_OV7725_LCD_FF`
 (Libero v12.7, M2S010 VF256 -1). Microchip no longer hosts it; an unmodified
 copy is in [zhouxinyu0723/Hello_fpga_green_crosses](https://github.com/zhouxinyu0723/Hello_fpga_green_crosses)
-as `HF10_OV7725_LCD_FF.7z`. Unpack it outside this repository.
+as `HF10_OV7725_LCD_FF.7z`. Unpack it outside this repository, for example to
+`~/hf10-ref`.
+
+After a build, `libero/build/convert_backup.zip` holds the project as Libero
+found it before converting it, so you can recover the reference from there.
+Do it before the next build, which deletes `libero/build/`:
+
+```bash
+mkdir -p ~/hf10-ref
+unzip -q libero/build/convert_backup.zip -d ~/hf10-ref
+mv ~/hf10-ref/build ~/hf10-ref/HF10_OV7725_LCD_FF
+rm ~/hf10-ref/HF10_OV7725_LCD_FF/.rppg-build
+```
 
 ## Build
 
 ```bash
 source ~/Microchip/setup-microchip-tools.sh
+export REF=~/hf10-ref/HF10_OV7725_LCD_FF    # the unpacked reference project
 make -C firmware
-libero SCRIPT:libero/build.tcl "SCRIPT_ARGS:$HOME/projects/hello-fpga-ref/HF10_OV7725_LCD_FF $PWD/firmware/build/rppg.hex"
+libero SCRIPT:libero/build.tcl "SCRIPT_ARGS:$REF $PWD/firmware/build/rppg.hex"
 ```
 
 `make -C firmware` builds this repo's firmware. `make -C firmware -f
 reference.mk` builds Microchip's demo firmware instead, with this repo's
 camera driver. Pass `-` instead of the `.hex` path to keep Microchip's
 original firmware image.
+
+`make` reads `REF` from the environment. Without it, the firmware build takes
+the reference sources from `libero/build/`, the copy that the last Libero build
+left there. `build.tcl` always needs the unpacked reference, because it
+deletes `libero/build/` before copying the reference in.
 
 The script copies the reference project to `libero/build/`, converts it to the
 installed Libero version, runs synthesis, place-and-route, and timing, and

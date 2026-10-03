@@ -4,8 +4,14 @@
 # (with "=", since APP_SRCS may use $(SC)).
 # Needs arm-none-eabi-gcc from SoftConsole on PATH.
 
-REF ?= $(HOME)/projects/hello-fpga-ref/HF10_OV7725_LCD_FF
+# By default, the copy of the reference project that libero/build.tcl makes,
+# so the firmware builds without a separate unpacked reference. The sources
+# used here are the same in both: the Libero conversion leaves SC/ alone.
+REF ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))../libero/build)
 SC  := $(REF)/SC/hellofpga_lcd_cam_ff
+ifeq ($(wildcard $(SC)),)
+$(error no reference sources in $(SC); run libero/build.tcl first, or pass REF=<path to HF10_OV7725_LCD_FF>)
+endif
 
 SF2_SRCS := \
 	$(SC)/ili9488.c \
